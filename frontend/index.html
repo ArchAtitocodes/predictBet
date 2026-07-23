@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>PredictBet — Quantitative Football Betting Intelligence System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PredictBet Poisson form-model betting analytics bench: build match models, compare against market odds, evaluate confidence tiers, and browse live Betika fixtures.">
+    <meta name="theme-color" content="#0F131C">
+    
+    <!-- Open Graph / Social Sharing -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="PredictBet — Football Betting Analytics">
+    <meta property="og:description" content="Aggressive Poisson GLM betting analytics engine, live odds comparison, and confidence tier predictions feed.">
+    
+    <!-- Inline Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚽</text></svg>">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="app">
+
+        <div class="topbar">
+            <div class="brand">
+                <span class="brand-mark">MMB</span>
+                <span class="brand-title">Match Model Bench</span>
+                <span class="brand-sub">poisson form-model &middot; scraper connected</span>
+            </div>
+            <div class="topbar-actions">
+                <div class="server-status" id="serverStatus" role="status" aria-live="polite">
+                    <span class="dot" aria-hidden="true"></span>
+                    <span id="serverStatusText">Checking Server...</span>
+                </div>
+                <button class="ghost" id="btnTeamInfo" aria-label="Open team information modal">Team Info</button>
+                <button class="ghost" id="btnBetika" aria-label="Open Betika fixtures browser">Betika Fixtures</button>
+                <button class="ghost" id="btnImport" aria-label="Import session from JSON file">Import JSON</button>
+                <input type="file" id="fileInput" accept=".json" aria-hidden="true" tabindex="-1">
+                <button class="ghost" id="btnExport" aria-label="Export current session to JSON">Export Session</button>
+                <button class="ghost" id="btnClearAll" aria-label="Clear all loaded fixtures">Clear All</button>
+                <button class="ghost" id="btnThemeToggle" title="Toggle Theme"
+                    aria-label="Toggle dark and light theme">☀️</button>
+                <button class="primary" id="btnAdd" aria-label="Add a new fixture">+ Add Match</button>
+            </div>
+        </div>
+
+        <div class="main-tabs-container">
+            <div class="main-tab active" id="tabPredFeed">🔥 Predictions Feed</div>
+            <div class="main-tab" id="tabMatchAnalyzer">📊 Match Analyzer</div>
+        </div>
+
+        <!-- Predictions Feed View -->
+        <div class="tab-view active" id="viewPredFeed" style="flex-direction: column; align-items: center;">
+            <div class="feed-container">
+                <div class="feed-header">
+                    <h1>Today's Top Picks</h1>
+                    <button class="primary" id="btnAutoScan">Auto-Scan All Fixtures</button>
+                </div>
+                <div class="feed-grid" id="predictionsGrid" aria-live="polite">
+                    <div class="empty-state">
+                        Click "Auto-Scan All Fixtures" to analyze Betika matches and generate predictions.
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Match Analyzer View (Existing) -->
+        <div class="tab-view body" id="viewMatchAnalyzer">
+            <div class="sidebar">
+                <div class="sidebar-head">
+                    <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                        <div class="label" id="matchCountLabel">Fixtures Loaded</div>
+                        <div class="count" id="matchCount">0</div>
+                    </div>
+                    <label for="sidebarSearch" class="visually-hidden">Filter fixtures</label>
+                    <input id="sidebarSearch" placeholder="Filter fixtures..." aria-label="Filter fixtures"
+                        style="margin-top:10px; width:100%; background: var(--panel-alt); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-family: var(--font-ui); font-size: 12px; outline: none;">
+                </div>
+                <div class="match-list" id="matchList" aria-labelledby="matchCountLabel">
+                    <div class="empty-state" id="sidebarEmpty">
+                        No matches yet.<br>Add one manually, scrape from Betika, or search teams.
+                    </div>
+                </div>
+            </div>
+
+            <div class="main" id="main">
+                <div class="main-empty">
+                    <div class="glyph" aria-hidden="true">&#8942;&#8942;&#8942;</div>
+                    <div class="msg">Select a fixture from the left, add one manually, or load Betika fixtures to see
+                        the full model breakdown — expected goals, 1X2 probabilities, goals markets, and market
+                        comparison if odds are supplied.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Betika Fixtures Modal -->
+        <div class="modal-backdrop" id="betikaModalBackdrop" role="dialog" aria-modal="true"
+            aria-labelledby="betikaModalTitle">
+            <div class="modal" style="max-width: 900px;">
+                <h2 id="betikaModalTitle">Betika Fixtures</h2>
+                <div class="sub">Real-time upcoming fixtures from Betika (betika.com/en-ke). Click "Build Model" to
+                    scrape team form from ESPN and run the Poisson model.</div>
+
+                <div class="modal-tabs">
+                    <div class="modal-tab active" id="tabUpcoming">Upcoming</div>
+                    <div class="modal-tab" id="tabLive">Live</div>
+                </div>
+
+                <div class="tab-content active" id="contentUpcoming">
+                    <div style="margin-bottom: 12px; display: flex; gap: 8px; align-items: center;">
+                        <label for="betikaSearch" class="visually-hidden">Filter fixtures by team name</label>
+                        <input id="betikaSearch" placeholder="Filter fixtures by team name..."
+                            aria-label="Filter fixtures by team name"
+                            style="flex:1; background: var(--panel-alt); border:1px solid var(--border); border-radius:4px; padding:8px 11px; color:var(--text); font-family:var(--font-mono); font-size:13px;">
+                        <button class="primary" id="btnRefreshFixtures">Refresh</button>
+                    </div>
+                    <div id="fixturesList" style="max-height: 500px; overflow-y: auto;" aria-live="polite">
+                        <div class="empty-state">Loading fixtures from Betika...</div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="contentLive">
+                    <div id="liveList" style="max-height: 500px; overflow-y: auto;" aria-live="polite">
+                        <div class="empty-state">Loading live matches...</div>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="ghost" id="btnBetikaClose">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Team Info Modal -->
+    <div class="modal-backdrop" id="teamInfoModalBackdrop" role="dialog" aria-modal="true"
+        aria-labelledby="teamInfoModalTitle">
+        <div class="modal" style="max-width: 700px;">
+            <h2 id="teamInfoModalTitle">Team Information</h2>
+            <div class="sub">Current team info scraped from Wikipedia. Search for any football club.</div>
+            <div class="form-grid" style="margin-bottom: 16px;">
+                <div class="form-field span2">
+                    <label for="teamInfoSearch">Search Team</label>
+                    <input id="teamInfoSearch" placeholder="Type team name, e.g. Arsenal..." autocomplete="off">
+                    <div class="suggestions-list" id="teamInfoSuggestions" style="display:none;"></div>
+                </div>
+            </div>
+            <div id="teamInfoContent" style="display: none;">
+                <div class="grid" style="gap: 12px;">
+                    <div class="card full-card">
+                        <div class="card-label">Club Overview</div>
+                        <div id="teamInfoOverview"
+                            style="font-family: var(--font-body); font-size: 13px; line-height: 1.6; color: var(--text-dim);">
+                        </div>
+                    </div>
+                    <div class="card half-card">
+                        <div class="card-label">Details</div>
+                        <div id="teamInfoDetails"
+                            style="font-family: var(--font-mono); font-size: 12px; line-height: 2;"></div>
+                    </div>
+                    <div class="card half-card">
+                        <div class="card-label">Source</div>
+                        <div id="teamInfoSource" style="font-family: var(--font-mono); font-size: 12px;"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="ghost" id="btnTeamInfoClose">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
+
+    <!-- Add Match Modal -->
+    <div class="modal-backdrop" id="modalBackdrop" role="dialog" aria-modal="true" aria-labelledby="addFixtureTitle">
+        <div class="modal">
+            <h2 id="addFixtureTitle">Add Fixture</h2>
+            <div class="sub">Select how to load fixture data. Auto Scrape connects to the local server to scrape recent
+                team scoring form and market odds. Manual Entry lets you type goals manually.</div>
+
+            <div class="modal-tabs">
+                <div class="modal-tab active" id="tabAuto">Auto Scrape</div>
+                <div class="modal-tab" id="tabManual">Manual Entry</div>
+            </div>
+
+            <!-- Auto Scrape content -->
+            <div class="tab-content active" id="contentAuto">
+                <div class="form-grid">
+                    <div class="form-field">
+                        <label for="auto_home">Home Team</label>
+                        <input id="auto_home" placeholder="Type home team, e.g. Arsenal..." autocomplete="off">
+                        <div class="suggestions-list" id="sugg_home" style="display:none;"></div>
+                    </div>
+                    <div class="form-field">
+                        <label for="auto_away">Away Team</label>
+                        <input id="auto_away" placeholder="Type away team, e.g. Chelsea..." autocomplete="off">
+                        <div class="suggestions-list" id="sugg_away" style="display:none;"></div>
+                    </div>
+
+                    <div class="form-field span2">
+                        <div class="collapsible-trigger" id="configTrigger" role="button" tabindex="0"
+                            aria-expanded="false" aria-controls="configContent">Advanced Settings (decay, shrinkage)</div>
+                        <div class="collapsible-content form-grid" id="configContent">
+                            <div class="form-field">
+                                <label for="f_auto_decay">Recency Decay</label>
+                                <input id="f_auto_decay" value="0.92">
+                                <div class="form-hint">gentle form weighting (0-1)</div>
+                            </div>
+                            <div class="form-field">
+                                <label for="f_auto_shrinkage">Shrinkage K</label>
+                                <input id="f_auto_shrinkage" value="6.0">
+                                <div class="form-hint">higher = conservative with small samples</div>
+                            </div>
+                            <div class="form-field">
+                                <label for="f_auto_hadv">Home Advantage &times;</label>
+                                <input id="f_auto_hadv" value="1.0">
+                                <div class="form-hint">multiplier on home expected goals</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="form-error" id="autoFormError" role="alert"></div>
+                </div>
+
+                <div class="modal-actions">
+                    <button class="ghost" id="btnAutoCancel">Cancel</button>
+                    <button class="primary" id="btnAutoSubmit"><span id="btnAutoText">Scrape & Build</span></button>
+                </div>
+            </div>
+
+            <!-- Manual Entry content -->
+            <div class="tab-content" id="contentManual">
+                <div class="form-grid" id="addForm">
+                    <div class="form-field"><label for="f_home_team">Home Team</label><input id="f_home_team" placeholder="e.g. Arsenal"
+                            value=""></div>
+                    <div class="form-field"><label for="f_away_team">Away Team</label><input id="f_away_team" placeholder="e.g. Chelsea"
+                            value=""></div>
+
+                    <div class="form-section-label">Home team — recent matches</div>
+                    <div class="form-field"><label for="f_home_scored">Goals scored</label><input id="f_home_scored"
+                            placeholder="2,1,3,1,2,0,2,1"></div>
+                    <div class="form-field"><label for="f_home_conceded">Goals conceded</label><input id="f_home_conceded"
+                            placeholder="1,1,0,2,1,1,0,2"></div>
+
+                    <div class="form-section-label">Away team — recent matches</div>
+                    <div class="form-field"><label for="f_away_scored">Goals scored</label><input id="f_away_scored"
+                            placeholder="1,0,1,2,1,1,0,1"></div>
+                    <div class="form-field"><label for="f_away_conceded">Goals conceded</label><input id="f_away_conceded"
+                            placeholder="1,2,1,1,2,0,1,2"></div>
+
+                    <div class="form-section-label">League baselines</div>
+                    <div class="form-field"><label for="f_lg_home">League avg home goals</label><input id="f_lg_home" value="1.45">
+                    </div>
+                    <div class="form-field"><label for="f_lg_away">League avg away goals</label><input id="f_lg_away" value="1.15">
+                    </div>
+                    <div class="form-field"><label for="f_hadv">Home advantage &times;</label><input id="f_hadv" value="1.0"></div>
+                    <div class="form-field"><label for="f_label">Match label (optional)</label><input id="f_label"
+                            placeholder="e.g. Matchday 12"></div>
+
+                    <div class="form-section-label">Market odds (optional — decimal)</div>
+                    <div class="form-field"><label for="f_odds_home">Home win odds</label><input id="f_odds_home" placeholder="2.38">
+                    </div>
+                    <div class="form-field"><label for="f_odds_draw">Draw odds</label><input id="f_odds_draw" placeholder="3.05"></div>
+                    <div class="form-field"><label for="f_odds_away">Away win odds</label><input id="f_odds_away" placeholder="3.65">
+                    </div>
+                    <div class="form-field"></div>
+
+                    <div class="form-error" id="formError" role="alert"></div>
+                </div>
+                <div class="modal-actions">
+                    <button class="ghost" id="btnManualCancel">Cancel</button>
+                    <button class="primary" id="btnSubmit">Build Model</button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+</body>
+
+</html>

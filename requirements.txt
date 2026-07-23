@@ -1,10 +1,11 @@
-# PredictBet Production Deployment Requirements
+# PredictBet Production Requirements
 # Compatible with Streamlit Cloud, Render, Railway, Docker, and cloud Linux/macOS/Windows environments
 
 # Web UI & Production Servers
 streamlit>=1.30.0
 gunicorn>=21.2.0
 uvicorn>=0.25.0
+fastapi>=0.100.0
 
 # HTTP & Web Scraping
 requests>=2.28.0
@@ -13,7 +14,7 @@ beautifulsoup4>=4.12.0
 feedparser>=6.0.10
 playwright>=1.40.0
 selenium>=4.15.0
-understat>=0.1.4  # Async xG scraper for Understat.com
+understat>=0.1.4
 
 # Data Science & Core Math
 numpy>=1.24.0
@@ -29,14 +30,14 @@ statsmodels>=0.14.0
 scikit-learn>=1.2.0
 xgboost>=1.7.0
 lightgbm>=4.0.0
-catboost>=1.2.0   # Gradient boosted tree classifier & regressor
+catboost>=1.2.0
 pymc>=5.10.0
-jax>=0.4.20      # Includes jax.numpy
-jaxlib>=0.4.20   # JAX C++ runtime engine
+jax>=0.4.20
+jaxlib>=0.4.20
 
 # Data Validation & Cleaning
-pandera>=0.18.0            # DataFrame schema validation
-great_expectations>=0.17.0 # Automated data quality checks
+pandera>=0.18.0
+great_expectations>=0.17.0
 pyjanitor>=0.26.0
 
 # Football Analytics & Visualization

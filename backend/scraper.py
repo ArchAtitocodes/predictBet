@@ -88,8 +88,10 @@ except ImportError:
 
 try:
     import httpx
+    _httpx_available = True
 except ImportError:
     httpx = None
+    _httpx_available = False
 
 try:
     from bs4 import BeautifulSoup

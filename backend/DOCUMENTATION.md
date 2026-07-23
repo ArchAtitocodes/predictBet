@@ -11,6 +11,14 @@ PredictBet is a Python-based betting analytics platform with a modular architect
 
 ---
 
+## Security: Safe Model Loading (`ml_pipeline.py`)
+
+Model serialization uses a **restricted unpickler** (`_SafeModelUnpickler`) instead of raw `pickle.load()`. The unpickler maintains a whitelist of safe modules and classes (xgboost, lightgbm, sklearn, scipy, numpy, builtins, datetime, etc.) and rejects any payload from non-whitelisted modules. Loaded artifacts are also validated to ensure they are dicts with the required `model` and `version` keys.
+
+This prevents arbitrary code execution if `.pkl` files on disk are tampered with.
+
+---
+
 ## Data Layer (`scraper.py`)
 
 ### Caching
@@ -26,10 +34,6 @@ class TeamForm:
     matches_played: int
     goals_scored: list[int]        # chronological, oldest first
     goals_conceded: list[int]      # chronological, oldest first
-    home_goals_scored: list[int]
-    home_goals_conceded: list[int]
-    away_goals_scored: list[int]
-    away_goals_conceded: list[int]
 ```
 
 ### Clients
@@ -64,13 +68,24 @@ class TeamForm:
 #### `EloRatingScraper`
 - `get_club_elo(team_name, form)` — Fetches live ELO from ClubELO API, seamlessly falling back to a form-derived empirical ELO formula (`1500 + ppg * 160 + gd * 80`) if the API is unreachable.
 
+### League Slug Resolution
+
+ESPN does not always return a league for every team. The helper `config.resolve_league_slug(home_league, away_league)` returns the first non-empty league, or `None` if neither side resolved one. Callers treat `None` as a **data-quality failure** and abort the model build explicitly, rather than silently falling back to a hardcoded league like `eng.1`.
+
 ### Data Validation Pipeline
 
-`validate_and_clean_match_data(df)` runs:
+`validate_and_clean_match_data(form)` runs:
 1. **pandas** — null removal, type coercion
 2. **pandera** schema — enforces `goals_scored >= 0`, `goals_conceded >= 0`
 3. **great_expectations** — expectation suite for value ranges
 4. **polars** — final conversion for high-performance downstream ops
+
+### JSON Site Scraper
+
+`JSONLinkScraper` and `JSONSiteDataCleaner` extract odds from registered betting sites. Extraction uses a **three-tier strategy**:
+1. **Structured first**: JSON-LD (`application/ld+json`) `SportsEvent`/`Event` blobs and HTML `data-odds`/`data-odd` attributes
+2. **Regex fallback**: pattern matching for `1X2 | Match Odds | Odds` followed by three decimal odds
+3. **Validation**: Pandas clipping, overround computation, de-vigging, and line-shopping summary
 
 ### Optional Integrations
 
@@ -178,6 +193,21 @@ edge = model_prob - fair_prob
 
 ---
 
+## Staking Engine (`intelligence.py`, `aiBetModel/staking.py`)
+
+All stake calculations flow through a **single contract**: `AggressiveStakeEngine.suggest(tier, edge_prob, odds)` where `edge_prob` is the absolute model-vs-market edge in probability units (e.g. `best_edge / 100` when edge is measured in percentage points). It is **not** the EV percentage.
+
+```
+kelly = edge_prob / (odds - 1)
+stake = min(kelly, TIER_CAP)
+```
+
+Tier caps: LOCK=10%, STRONG=5%, VALUE=3%, LEAN=1%, NO_BET=0%.
+
+The companion module `aiBetModel/staking.py` provides `recommend_stake()` with the same tier/cap logic plus a `KELLY_MULTIPLIER` per tier (LOCK=1.0, STRONG=0.5, VALUE=0.25). Both engines are kept in sync; the streamlit app and pipeline both call `AggressiveStakeEngine.suggest()` with the same `best_edge / 100` quantity.
+
+---
+
 ## HTTP API Reference
 
 ### `GET /api/predictions`
@@ -227,37 +257,49 @@ Same as `/api/scrape` but accepts `home=Arsenal&away=Chelsea` strings and resolv
 
 Returns `scoreline_heatmap.png` as `image/png`. Cache-busted by timestamp parameter in dashboard.
 
+### `GET /api/monitoring`
+
+Returns system metrics and active alerts.
+
+### `GET /api/results/sync`
+
+Triggers result syncing for pending predictions against finished fixtures. Requires `FOOTBALL_DATA_API_KEY`.
+
 ---
 
 ## CLI Reference
 
 ```bash
 # Start server
-python analytics.py serve [--port 8080]
+python -m uvicorn backend.server:app --host 0.0.0.0 --port 8080
+
+# Start Streamlit dashboard
+streamlit run streamlit_app.py
 
 # Build match model (scrapes ESPN automatically)
-python analytics.py model --home-team TEAM --away-team TEAM [OPTIONS]
+python -m backend.analytics model --home-team TEAM --away-team TEAM [OPTIONS]
 
-Options:
-  --odds-home FLOAT       Home win decimal odds
-  --odds-draw FLOAT       Draw decimal odds  
-  --odds-away FLOAT       Away win decimal odds
-  --home-advantage FLOAT  xG multiplier for home (default 1.0)
-  --decay FLOAT           Recency decay (default 0.92)
-  --shrinkage-k FLOAT     Bayesian shrinkage K (default 6.0)
-  --json                  Output JSON instead of formatted table
-  --export FILE.json      Append record to JSON file
+# Options:
+#   --league SLUG           League slug (required)
+#   --odds-home FLOAT       Home win decimal odds
+#   --odds-draw FLOAT       Draw decimal odds  
+#   --odds-away FLOAT       Away win decimal odds
+#   --home-advantage FLOAT  xG multiplier for home (default 1.0)
+#   --decay FLOAT           Recency decay (default 0.92)
+#   --shrinkage-k FLOAT     Bayesian shrinkage K (default 6.0)
+#   --json                  Output JSON instead of formatted table
+#   --export FILE.json      Append record to JSON file
 
 # Manual data input (override scraper)
-python analytics.py model \
+python -m backend.analytics model \
   --home-team Arsenal --away-team Chelsea \
   --home-results "2,1,3,2,1" --home-conceded "0,1,1,2,0" \
   --away-results "1,1,2,0,1" --away-conceded "1,2,0,1,2"
 
 # Betika integration
-python analytics.py betika-fixtures [--limit 50] [--live]
-python analytics.py betika-search QUERY
-python analytics.py betika-model --home TEAM --away TEAM
+python -m backend.analytics betika-fixtures [--limit 50] [--live]
+python -m backend.analytics betika-search QUERY
+python -m backend.analytics betika-model --home TEAM --away TEAM
 ```
 
 ---
@@ -307,6 +349,12 @@ The system maps Confidence Scores + Market Edges into actionable tiers:
 
 ---
 
+## Automated Result Syncing (`pipeline.py`, `market_pipeline.py`)
+
+`AutomatedPredictionPipeline` includes a `_sync_results_background()` method that calls `ResultsSyncer.sync()` for top competitions (PL, PD, SA, FL1, BL1, CL) after every pipeline run. A separate `start_result_sync()` thread is available for periodic background resolution. Both require `FOOTBALL_DATA_API_KEY` to be set; otherwise they skip gracefully.
+
+---
+
 ## Session Export Format
 
 The dashboard exports sessions as JSON arrays. Each record follows this schema:
@@ -344,3 +392,4 @@ The dashboard exports sessions as JSON arrays. Each record follows this schema:
   }
 }
 ```
+

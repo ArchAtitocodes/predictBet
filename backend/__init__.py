@@ -1,5 +1,5 @@
 """
-EQFBIS — Elite Quantitative Football Betting Intelligence System
+PredictBet — Elite Quantitative Football Betting Intelligence System
 ===============================================================
 
 Package init. Importing this package exposes the key public symbols from

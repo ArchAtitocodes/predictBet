@@ -1,5 +1,5 @@
 """
-EQFBIS Database Migrations
+PredictBet Database Migrations
 ===========================
 
 Formal migration system for SQLite schema changes. Tracks applied migrations

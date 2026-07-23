@@ -25,10 +25,22 @@ EFFICIENCY_THRESHOLDS = {
     "slightly_inefficient": 0.02,
 }
 
+# Default league slug when ESPN does not return one for either team.
+# Using None instead of a hardcoded league makes failures visible instead of
+# silently producing wrong-data models.
+DEFAULT_LEAGUE_SLUG = None
+
 # Environment & Server Config
 PORT = int(os.environ.get("PORT", 8080))
 HOST = os.environ.get("HOST", "0.0.0.0")
 FOOTBALL_DATA_API_KEY = os.environ.get("FOOTBALL_DATA_API_KEY", "")
 BETIKA_BASE_URL = os.environ.get("BETIKA_BASE_URL", "https://api.betika.com")
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", 3600))
+
+
+def resolve_league_slug(home_league: Optional[str], away_league: Optional[str]) -> Optional[str]:
+    """Return a league slug if at least one side resolved one, otherwise None.
+    Callers should treat None as a data-quality failure rather than silently
+    falling back to a different league."""
+    return home_league or away_league or DEFAULT_LEAGUE_SLUG
 

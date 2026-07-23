@@ -34,6 +34,7 @@ catboost>=1.2.0
 pymc>=5.10.0
 jax>=0.4.20
 jaxlib>=0.4.20
+hashlib>=4.0.0
 
 # Data Validation & Cleaning
 pandera>=0.18.0

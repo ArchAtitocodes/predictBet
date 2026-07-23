@@ -596,6 +596,56 @@ def _tier_badge(tier: str) -> str:
     return f'<span class="tier-{tier}">{tier}</span>'
 
 
+def _format_winning_team(row: dict) -> str:
+    hp = row.get("home_win_prob", 0)
+    dp = row.get("draw_prob", 0)
+    ap = row.get("away_win_prob", 0)
+    home_team = row.get("home_team", "Home")
+    away_team = row.get("away_team", "Away")
+
+    if hp >= ap and hp >= dp:
+        return f"🏆 <b>{home_team}</b> ({hp:.1f}%)"
+    elif ap >= hp and ap >= dp:
+        return f"🏆 <b>{away_team}</b> ({ap:.1f}%)"
+    else:
+        return f"🤝 <b>Draw</b> ({dp:.1f}%)"
+
+
+def _format_suggested_bet(row: dict) -> str:
+    best_outcome = str(row.get("best_outcome", "none")).lower()
+    tier = str(row.get("confidence_tier", "LEAN")).upper()
+    badge = _tier_badge(tier)
+    home_team = row.get("home_team", "Home")
+    away_team = row.get("away_team", "Away")
+
+    if "home" in best_outcome or best_outcome == "1":
+        bet_desc = f"{home_team} Win"
+    elif "away" in best_outcome or best_outcome == "2":
+        bet_desc = f"{away_team} Win"
+    elif "draw" in best_outcome or best_outcome == "x":
+        bet_desc = "Draw"
+    elif "over" in best_outcome or "2_5" in best_outcome:
+        bet_desc = "Over 2.5 Goals"
+    elif "btts" in best_outcome:
+        bet_desc = "Both Teams To Score"
+    else:
+        bet_desc = f"{home_team} Double Chance (1X)"
+
+    return f"🎯 <b>{bet_desc}</b> &nbsp; {badge}"
+
+
+def _format_best_odds(row: dict) -> str:
+    best = row.get("best_available_odds") or {}
+    best_h = best.get("home") or {}
+    if isinstance(best_h, dict) and best_h.get("odd"):
+        return f"<b>{best_h.get('odd')}</b> <small>({best_h.get('site', 'JSON Link')})</small>"
+
+    ho = row.get("home_odd") or row.get("offered_odds")
+    if ho and float(ho) > 1.0:
+        return f"<b>{ho}</b>"
+    return "N/A"
+
+
 def _render_top_value_bets_table(df: pd.DataFrame):
     if df.empty:
         st.warning("No value bets match current filters.")
@@ -609,14 +659,23 @@ def _render_top_value_bets_table(df: pd.DataFrame):
     table_df["Grade"] = table_df["data_grade"]
     table_df["Risk"] = table_df["risk_label"]
     table_df["xG"] = table_df.apply(lambda r: f'{r["expected_home_goals"]:.2f}-{r["expected_away_goals"]:.2f}', axis=1)
+    table_df["Possible Winning Team"] = table_df.apply(lambda r: _format_winning_team(r.to_dict()), axis=1)
+    table_df["Suggested Bet to Place"] = table_df.apply(lambda r: _format_suggested_bet(r.to_dict()), axis=1)
+    table_df["Best Scraped Odds"] = table_df.apply(lambda r: _format_best_odds(r.to_dict()), axis=1)
+    table_df["Winning Prob %"] = table_df.apply(lambda r: f'{max(r.get("home_win_prob", 0), r.get("away_win_prob", 0), r.get("draw_prob", 0)):.1f}%', axis=1)
+    table_df["EV %"] = table_df["ev_pct"].apply(lambda x: f'+{x:.1f}%' if x > 0 else f'{x:.1f}%')
+    table_df["Suggested Stake"] = table_df["stake_suggestion_pct"].apply(lambda x: f'{x:.2f}% Bankroll')
 
     columns = [
         "match_label", "start_time", "competition_name", "best_outcome",
         "home_win_prob", "fair_odds_best", "home_odd", "Edge", "EV",
         "confidence_score", "risk_score", "Grade", "Tier", "Stake", "data_grade",
+        "match_label", "competition_name", "Possible Winning Team",
+        "Winning Prob %", "Best Scraped Odds", "Suggested Bet to Place",
+        "EV %", "Suggested Stake", 
     ]
     rename_map = {
-        "match_label": "Match",
+        "match_label": "Match / Fixture",
         "start_time": "Start Time",
         "competition_name": "Competition",
         "best_outcome": "Predicted Winner",
@@ -1207,13 +1266,64 @@ def render_team_intel():
 # ---------------------------------------------------------------------------
 
 def render_data_sources():
-    st.markdown('<div class="main-header">Global Betting Sites Directory</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Cleaned football_betting_sites.json — line shopping and odds comparison</div>',
+    st.markdown('<div class="main-header">Global Betting Sites & Links Scraper</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Live Scraping, Data Cleaning, and Line Shopping from football_betting_sites.json</div>',
                 unsafe_allow_html=True)
-    search_q = st.text_input("Search Betting Site or Domain", "")
+
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        search_q = st.text_input("Search Betting Site or Domain", "")
+    with col2:
+        scrape_btn = st.button("⚡ Scrape All Links Now", type="primary")
+
+    if scrape_btn:
+        with st.spinner("Scraping all site links and cleaning data using pandas/polars..."):
+            try:
+                from backend.scraper import json_site_scraper
+                report = json_site_scraper.scrape_all_sites(team_query=search_q if search_q else None, limit=30)
+                st.session_state["scraped_sites_report"] = report
+                st.success(f"Scraped {report.get('total_sites')} sites successfully!")
+            except Exception as ex:
+                st.error(f"Scraping error: {ex}")
+
+    report = st.session_state.get("scraped_sites_report")
+    if report:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Total Sites", report.get("total_sites", 0))
+        with c2:
+            st.metric("Successful Scrapes", report.get("successful_sites", 0))
+        with c3:
+            st.metric("Sites with Valid Odds", report.get("sites_with_odds", 0))
+        with c4:
+            st.metric("Failed / Blocked", report.get("failed_sites", 0))
+
+        line_shop = report.get("line_shopping", {})
+        if line_shop:
+            st.subheader("💡 Best Line Shopping Odds Found Across Scraped Links")
+            ls_col1, ls_col2, ls_col3 = st.columns(3)
+            with ls_col1:
+                bh = line_shop.get("best_home_odds")
+                if bh:
+                    st.metric("Best Home Odds", f"{bh.get('odd')}", delta=bh.get("site"))
+            with ls_col2:
+                bd = line_shop.get("best_draw_odds")
+                if bd:
+                    st.metric("Best Draw Odds", f"{bd.get('odd')}", delta=bd.get("site"))
+            with ls_col3:
+                ba = line_shop.get("best_away_odds")
+                if ba:
+                    st.metric("Best Away Odds", f"{ba.get('odd')}", delta=ba.get("site"))
+
+        st.subheader("Cleaned & Validated Site Data Matrix")
+        sites_data = report.get("sites_data", [])
+        if sites_data and pd is not None:
+            st.dataframe(pd.DataFrame(sites_data), use_container_width=True, hide_index=True)
+
     sites = betting_site_registry.search_sites(search_q)
-    st.write(f"Showing **{len(sites)}** registered betting sites:")
-    st.dataframe(pd.DataFrame(sites), use_container_width=True, hide_index=True)
+    st.write(f"Showing **{len(sites)}** registered betting sites in JSON registry:")
+    if pd is not None:
+        st.dataframe(pd.DataFrame(sites), use_container_width=True, hide_index=True)
 
 
 # ---------------------------------------------------------------------------

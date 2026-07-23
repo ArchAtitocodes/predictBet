@@ -36,8 +36,8 @@
     --glass-bg: rgba(18, 22, 30, 0.75);
 }
 
-* {
-    box-sizing: border-box;
+body.modal-open {
+    overflow: hidden;
 }
 
 html,
@@ -1439,6 +1439,14 @@ select:focus-visible {
         flex-direction: column;
     }
 
+    .body.show-detail .sidebar {
+        display: none;
+    }
+
+    .body.show-detail .main {
+        display: block;
+    }
+
     .sidebar {
         width: 100%;
         flex: 0 0 auto;
@@ -1494,6 +1502,13 @@ select:focus-visible {
     .match-row {
         position: relative;
         padding-right: 32px;
+    }
+
+    .btn-back-mobile {
+        display: inline-block;
+        margin-bottom: 12px;
+        padding: 6px 12px;
+        font-size: 12px;
     }
 }
 

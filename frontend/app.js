@@ -370,6 +370,32 @@ function renderMain() {
       </div>
     </div>
 
+    <div class="card full-card" style="margin-bottom: 20px;">
+      <div class="card-label">🏆 Analysed Game Prediction & Suggested Bet Summary</div>
+      <div class="table-scroll">
+        <table class="edge-table" style="width: 100%;">
+          <thead>
+            <tr>
+              <th>Match / Fixture</th>
+              <th>Possible Winning Team</th>
+              <th>Winning Prob %</th>
+              <th>Best Scraped Odds</th>
+              <th>Suggested Bet to Place</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><b>${escapeHtml(m.home_team)} vs ${escapeHtml(m.away_team)}</b></td>
+              <td>🏆 <b>${m.home_win_prob >= m.away_win_prob ? escapeHtml(m.home_team) : escapeHtml(m.away_team)}</b></td>
+              <td><b>${(Math.max(m.home_win_prob, m.away_win_prob, m.draw_prob) * 100).toFixed(1)}%</b></td>
+              <td><b>${rec.best_available_odds && rec.best_available_odds.home ? rec.best_available_odds.home.odd : (rec.odds && rec.odds.home ? rec.odds.home : 'N/A')}</b></td>
+              <td>🎯 <b>${m.home_win_prob >= m.away_win_prob ? escapeHtml(m.home_team) + ' Win' : escapeHtml(m.away_team) + ' Win'}</b> &nbsp; <span style="background:var(--cyan); color:#000; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:11px;">${rec.confidence_tier || 'VALUE'}</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="grid">
       <div class="card gauge-card">
         <div class="card-label">Data Sufficiency</div>

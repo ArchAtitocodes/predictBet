@@ -40,6 +40,9 @@ from urllib.parse import parse_qs, urlparse
 from typing import Optional
 from backend.pipeline import AutomatedPredictionPipeline
 
+def _math_exponential_decay(rate: float, time_step: float) -> float:
+    return math.exp(-rate * time_step)
+
 try:
     import requests
 except ImportError:

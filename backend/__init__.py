@@ -160,6 +160,35 @@ if _intelligence_available:
         "generate_aggressive_narrative",
     ]
 
+# ---------------------------------------------------------------------------
+# pipeline (automated workflow)
+# ---------------------------------------------------------------------------
+try:
+    from pipeline import (
+        AutomatedPredictionPipeline,
+        FixtureIngestor,
+        FixtureEnricher,
+        MarketEvaluator,
+        BetRefusalEngine,
+        InstitutionalReportGenerator,
+        FixtureEnrichment,
+        PipelineResult,
+    )
+    _pipeline_available = True
+    __all__ += [
+        "AutomatedPredictionPipeline",
+        "FixtureIngestor",
+        "FixtureEnricher",
+        "MarketEvaluator",
+        "BetRefusalEngine",
+        "InstitutionalReportGenerator",
+        "FixtureEnrichment",
+        "PipelineResult",
+    ]
+except Exception as e:
+    logger.warning("pipeline module could not be imported: %s", e)
+    _pipeline_available = False
+
 if _market_pipeline_available:
     __all__ += [
         "XGDataClient",

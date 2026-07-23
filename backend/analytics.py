@@ -38,6 +38,7 @@ import webbrowser
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from typing import Optional
+from backend.pipeline import AutomatedPredictionPipeline
 
 try:
     import requests
@@ -105,6 +106,22 @@ from scraper import (
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_SCRIPT_DIR)
 _FRONTEND_DIR = os.path.join(_PROJECT_ROOT, "frontend")
+
+# ---------------------------------------------------------------------------
+# Automated pipeline singleton (thread-safe lazy init)
+# ---------------------------------------------------------------------------
+_pipeline_lock = threading.Lock()
+_pipeline_singleton = None
+
+def get_pipeline() -> "AutomatedPredictionPipeline":
+    global _pipeline_singleton
+    if _pipeline_singleton is None:
+        with _pipeline_lock:
+            if _pipeline_singleton is None:
+                from pipeline import AutomatedPredictionPipeline
+                _pipeline_singleton = AutomatedPredictionPipeline(max_workers=4)
+                _pipeline_singleton.run_full_pipeline(fixture_limit=50)
+    return _pipeline_singleton
 # ---------------------------------------------------------------------------
 # Advanced Modeling and Visualization
 # ---------------------------------------------------------------------------
@@ -1244,6 +1261,39 @@ class AnalyticsHTTPHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json({"error": str(e)}, status=500)
             return
 
+        if self.path.startswith("/api/pipeline/status"):
+            try:
+                from pipeline import get_pipeline
+                p = get_pipeline()
+                self._send_json({
+                    "status": "success",
+                    "pipeline_status": p.status,
+                    "last_run": p.last_run.isoformat() if p.last_run else None,
+                    "results_count": len(p.results),
+                    "version": "v3.0",
+                })
+            except Exception as e:
+                self._send_json({"error": str(e)}, status=500)
+            return
+
+        if self.path.startswith("/api/pipeline/run"):
+            try:
+                limit = self._validate_int(query.get("limit", ["100"])[0], 100, 1, 500)
+                from pipeline import get_pipeline
+                p = get_pipeline()
+                results = p.run_full_pipeline(fixture_limit=limit)
+                payload = {
+                    "status": "success",
+                    "pipeline_status": p.status,
+                    "last_run": p.last_run.isoformat() if p.last_run else None,
+                    "count": len(results),
+                    "data": [r.prediction_card for r in results],
+                }
+                self._send_json(payload)
+            except Exception as e:
+                self._send_json({"error": str(e)}, status=500)
+            return
+
         if self.path.startswith("/api/pipeline/v2/predict"):
             try:
                 from intelligence import PredictionPipelineV2
@@ -1282,6 +1332,7 @@ class AnalyticsHTTPHandler(http.server.BaseHTTPRequestHandler):
             return
 
         self._send_json({"error": "Not Found"}, status=404)
+
 
 
 # ---------------------------------------------------------------------------

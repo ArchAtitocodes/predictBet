@@ -526,41 +526,47 @@ def generate_aggressive_narrative(model: dict, signals: dict, tier: ConfidenceTi
 
 
 class AutoPredictionPipeline:
-    """Batch scans fixtures and ranks by edge."""
-    
+    """Batch scans fixtures and ranks by edge. Delegates to the institutional
+    AutomatedPredictionPipeline in pipeline.py which implements all 9 steps."""
+
     def __init__(self):
         from scraper import ESPNScraperClient, HeadToHeadFetcher, FormMomentumCalculator, MultiMarketPredictor
         self.espn = ESPNScraperClient()
         self.h2h = HeadToHeadFetcher()
         self.momentum = FormMomentumCalculator()
         self.market = MultiMarketPredictor()
+        self._pipeline = None
+
+    def _get_pipeline(self):
+        if self._pipeline is None:
+            from pipeline import AutomatedPredictionPipeline
+            self._pipeline = AutomatedPredictionPipeline(max_workers=4)
+        return self._pipeline
 
     async def scan_all_fixtures(self, betika_fixtures: list[dict]) -> list[PredictionCard]:
-        # This function acts as the core pipeline orchestrator.
-        # Implemented asynchronously to handle batch processing when wired to the API.
-        
-        import asyncio
-        from scraper import build_model
-        
+        pipeline = self._get_pipeline()
+        pipeline_results = pipeline.run_full_pipeline(fixture_limit=len(betika_fixtures))
         cards = []
-        
-        for fixture in betika_fixtures:
-            home_team = fixture.get("home_team", "")
-            away_team = fixture.get("away_team", "")
-            match_id = fixture.get("match_id", "")
-            date = fixture.get("start_time", "")
-            comp = fixture.get("competition_name", "")
-            
-            # Simple odds fallback
-            oh = float(fixture.get("home_odd", 0) or 0)
-            od = float(fixture.get("draw_odd", 0) or 0)
-            oa = float(fixture.get("away_odd", 0) or 0)
-            
-            # (In reality, this would search ESPN, build TeamForm, then build_model)
-            # We construct a mock pipeline output here for now, but will connect real data in analytics.py.
-            # The actual execution happens via analytics.py calling scraper tools.
-            pass
-            
+        for r in pipeline_results:
+            pc = r.prediction_card
+            cards.append(PredictionCard(
+                match_label=pc.get("match_label", ""),
+                match_date=pc.get("start_time", ""),
+                competition=pc.get("competition_name", ""),
+                recommended_bet=pc.get("best_outcome", ""),
+                confidence_tier=pc.get("confidence_tier", "NO_BET"),
+                model_probability=pc.get("model_prob_best", 0) / 100 if pc.get("model_prob_best") else 0,
+                market_implied_probability=pc.get("market_implied_best", 0) / 100 if pc.get("market_implied_best") else 0,
+                edge_pct=pc.get("edge_pct", 0),
+                stake_suggestion_pct=pc.get("stake_suggestion_pct", 0),
+                signals={
+                    "home_momentum": pc.get("momentum_home", {}),
+                    "away_momentum": pc.get("momentum_away", {}),
+                },
+                multi_market_predictions=pc.get("market_comparison", {}),
+                scouting_narrative=pc.get("scouting_narrative", ""),
+                model_data=pc.get("model", {}),
+            ))
         return cards
 
 

@@ -460,6 +460,49 @@ def _build_match_model(home_name: str, away_name: str, odds_h: float = 0, odds_d
     }
     data_grade = grade_data_quality(_evidence_checklist_from_row(row_for_evidence))
 
+    has_odds = (odds_h > 1.0 and odds_d > 1.0 and odds_a > 1.0)
+    implied_probs_list = [implied_probability(o) for o in (odds_h, odds_d, odds_a)] if has_odds else []
+    fair_probs_list = devig_proportional([odds_h, odds_d, odds_a]) if has_odds else []
+    efficiency_class = classify_efficiency(best_edge / 100.0) if best_outcome != "none" else "N/A"
+
+    market_assessments_data = build_market_assessments(
+        model.home_win_prob, model.draw_prob, model.away_win_prob,
+        odds_h if has_odds else 2.0, odds_d if has_odds else 3.2, odds_a if has_odds else 3.5
+    ) if has_odds else []
+
+    conservative_stake_obj = suggest_stake(best_model_prob, offered if offered > 1 else 2.0, best_outcome, confidence_raw / 100.0)
+
+    data_grade_checklist = build_data_quality_checklist(
+        model.home_win_prob, model.draw_prob, model.away_win_prob,
+        odds_home=odds_h if has_odds else None,
+        odds_draw=odds_d if has_odds else None,
+        odds_away=odds_a if has_odds else None,
+        xg_available=True,
+        team_strength_metrics_available=True,
+        historical_h2h_available=bool(h2h_raw),
+        lineups_confirmed=False,
+        injuries_verified=False,
+        conflicting_sources=ensemble.agreement_score < 0.6 if ensemble else False,
+        small_sample_size=(home_form.matches_played + away_form.matches_played) < 10,
+    )
+    if data_grade_checklist:
+        data_grade = data_grade_checklist
+
+    stake_recs_data = build_stake_recommendations(
+        model.home_win_prob, model.draw_prob, model.away_win_prob,
+        odds_h if has_odds else 2.0, odds_d if has_odds else 3.2, odds_a if has_odds else 3.5,
+        confidence="high" if confidence_raw >= 60 else "medium",
+        data_grade=data_grade,
+        model_disagreement_pts=(1.0 - (ensemble.agreement_score if ensemble else 0.5)) * 100
+    ) if has_odds else {}
+
+    conservative_narrative = generate_scouting_narrative(model, ensemble, market_comp)
+    comparison_table_md = build_comparison_from_model(
+        model.expected_home_goals, model.expected_away_goals,
+        model.home_win_prob, model.away_win_prob, model.draw_prob,
+        home_intel.get("elo"), away_intel.get("elo")
+    )
+
     reasons_for = []
     reasons_against = []
     if best_edge > 5:
@@ -534,6 +577,15 @@ def _build_match_model(home_name: str, away_name: str, odds_h: float = 0, odds_d
         "risk_score": round(risk_score, 0),
         "risk_label": risk_label,
         "stake_suggestion_pct": round(stake_pct, 2),
+        "conservative_stake_pct": round(conservative_stake_obj.capped_fraction * 100, 2),
+        "conservative_stake_note": conservative_stake_obj.note,
+        "market_efficiency": efficiency_class,
+        "market_assessments": market_assessments_data,
+        "stake_recommendations": stake_recs_data,
+        "conservative_scouting_narrative": conservative_narrative,
+        "comparison_table_md": comparison_table_md,
+        "implied_probs_list": implied_probs_list,
+        "fair_probs_list": fair_probs_list,
         "data_grade": data_grade,
         "market_overround_pct": market_comp.get("bookmaker_overround_pct") if market_comp else None,
         "model_prob_best": round(best_model_prob * 100, 1) if best_outcome != "none" else None,

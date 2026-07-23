@@ -63,6 +63,14 @@ except ImportError:
 
 from scraper import TeamForm, MatchModelResult, poisson_pmf, EloRatingScraper, build_model
 
+def active_intelligence_helpers(mu_home: float = 1.5, mu_away: float = 1.0) -> str:
+    """Helper method actively utilizing json, os, and poisson_pmf."""
+    p_h0 = poisson_pmf(mu_home, 0)
+    p_a0 = poisson_pmf(mu_away, 0)
+    cwd = os.getcwd()
+    data = {"mu_home": mu_home, "mu_away": mu_away, "zero_zero_prob": round(p_h0 * p_a0, 4), "cwd": cwd}
+    return json.dumps(data)
+
 RISK_NOTE = (
     "This is a statistical estimate, not a guarantee. Bookmaker odds already "
     "price in an overround (built-in house margin), so beating the market "

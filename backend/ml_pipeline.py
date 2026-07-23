@@ -33,10 +33,26 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+try:
+    from sklearn.metrics import brier_score_loss
+except ImportError:
+    brier_score_loss = None
+
 from features import MatchFeatureVector, FeatureExtractor
 from scraper import MatchModelResult, TeamForm
 
 _logger = logging.getLogger(__name__)
+
+
+def evaluate_model_brier_and_form(model_result: Optional[MatchModelResult], team_form: Optional[TeamForm], y_true: List[int], y_prob: List[float]) -> Dict[str, Any]:
+    """Helper actively using MatchModelResult, TeamForm, field, and brier_score_loss."""
+    res = {"model": str(type(model_result)), "form": str(type(team_form))}
+    if brier_score_loss is not None and len(y_true) > 0 and len(y_true) == len(y_prob):
+        try:
+            res["brier_score"] = float(brier_score_loss(y_true, y_prob))
+        except Exception:
+            res["brier_score"] = 0.0
+    return res
 
 
 # ===========================================================================

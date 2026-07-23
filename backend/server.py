@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import os
 from typing import Optional
-
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, Response
@@ -451,7 +450,6 @@ def serve_frontend():
 
 @app.get("/api/chart")
 def chart(file: str = ""):
-    import urllib.parse
     file_path = os.path.join(_FRONTEND_DIR, file) if file else os.path.join(_FRONTEND_DIR, "scoreline_heatmap.png")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Chart not found")

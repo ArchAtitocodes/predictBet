@@ -7,7 +7,36 @@ PredictBet is a Python-based betting analytics platform with a modular architect
 1. **Data Layer** (`scraper.py`) — multi-source scraping, validation, Head-to-Head fetcher, and empirical form momentum.
 2. **Intelligence Layer** (`intelligence.py`) — Ensemble builder (Shrinkage + GLM + ELO), Confidence engine, Aggressive staking recommendations, and automated Prediction Pipelines.
 3. **Market Layer** (`market_pipeline.py`, `backtest.py`) — Odds movement tracking, results syncing, model version comparison, and historical ROI backtesting.
-4. **Presentation Layer** (`analytics.py`, `dashboard.html`) — HTTP server, API endpoints, CLI, and interactive web UI with real-time predictions.
+4. **Presentation Layer** (`streamlit_app.py`, `dashboard.html`) — Streamlit UI, API endpoints, CLI, and interactive web UI with real-time predictions.
+
+---
+
+## Recent Changes
+
+### Automation & UI
+- **Auto-analyze toggle** in sidebar — automatically analyzes every fixture when the Fixtures page loads
+- **Auto-refresh interval** — configurable 0–1800s slider for continuous automated updates
+- **Auto-Scan All Fixtures** button — one-click analysis of all visible fixtures
+- **Confidence-sorted feed** — all predictions ranked LOCK → STRONG → VALUE → LEAN → NO_BET
+- **Match Analyzer integration** — analyzed fixtures auto-populate the Match Analyzer dropdown
+
+### Bug Fixes
+- Fixed `PredictionCard` as proper `@dataclass` — was previously an uninstantiable annotated class
+- Fixed `_build_match_model` dead code — full pipeline now executes end-to-end
+- Fixed undefined `fixture` variable — added safe `Optional[dict]` parameter
+- Fixed `PredictionLedger` import in `streamlit_app.py`
+- Fixed missing `backend/requirements.txt` for Docker builds
+- Fixed `streamlit_option_menu` dependency
+- Fixed `Tuple` import in `backend/analytics.py`
+- Fixed `bucket_size` scope bug in `backend/intelligence.py`
+- Fixed `fair_odds` undefined in `backend/pipeline.py`
+- Fixed `h2h_available` unexpected keyword in `backend/pipeline.py`
+- Fixed `home_info`/`away_info` undefined in `backend/pipeline.py`
+- Fixed `EvidenceChecklist` import in `backend/pipeline.py`
+- Fixed `Optional`/`Any` imports in `backend/scraper.py`
+- Removed invalid `hashlib>=4.0.0` from requirements (blocked deployment)
+- Removed duplicate requirements sections
+- Fixed silent exception swallowing — errors now reported per fixture
 
 ---
 
@@ -110,19 +139,14 @@ fetch_team_stock_data("Manchester United")  # → MANU ticker data
 
 ```python
 def weighted_shrunk_rate(values, league_avg, decay=0.92, shrinkage_k=6.0):
-    """
-    Bayesian shrinkage toward league average with exponential recency decay.
-    
-    shrinkage = n / (n + k)   where n = sample size, k = shrinkage factor
-    weighted_avg uses decay^(n-1-i) weights (recent matches weighted higher)
-    """
+    # Exponential recency decay + Bayesian shrinkage toward league average
 ```
 
 ---
 
-## Model Layer (`analytics.py`)
+## Model Layer (`scraper.py`, `analytics.py`)
 
-### `MatchModelResult`
+### `MatchModelResult` Dataclass
 
 ```python
 @dataclass
@@ -140,6 +164,9 @@ class MatchModelResult:
     btts_no_prob: float
     sample_size_home: int
     sample_size_away: int
+    elo_home: Optional[float] = None
+    elo_away: Optional[float] = None
+    dixon_coles_applied: bool = False
 ```
 
 ### `build_model()`
@@ -267,43 +294,6 @@ Triggers result syncing for pending predictions against finished fixtures. Requi
 
 ---
 
-## CLI Reference
-
-```bash
-# Start server
-python -m uvicorn backend.server:app --host 0.0.0.0 --port 8080
-
-# Start Streamlit dashboard
-streamlit run streamlit_app.py
-
-# Build match model (scrapes ESPN automatically)
-python -m backend.analytics model --home-team TEAM --away-team TEAM [OPTIONS]
-
-# Options:
-#   --league SLUG           League slug (required)
-#   --odds-home FLOAT       Home win decimal odds
-#   --odds-draw FLOAT       Draw decimal odds  
-#   --odds-away FLOAT       Away win decimal odds
-#   --home-advantage FLOAT  xG multiplier for home (default 1.0)
-#   --decay FLOAT           Recency decay (default 0.92)
-#   --shrinkage-k FLOAT     Bayesian shrinkage K (default 6.0)
-#   --json                  Output JSON instead of formatted table
-#   --export FILE.json      Append record to JSON file
-
-# Manual data input (override scraper)
-python -m backend.analytics model \
-  --home-team Arsenal --away-team Chelsea \
-  --home-results "2,1,3,2,1" --home-conceded "0,1,1,2,0" \
-  --away-results "1,1,2,0,1" --away-conceded "1,2,0,1,2"
-
-# Betika integration
-python -m backend.analytics betika-fixtures [--limit 50] [--live]
-python -m backend.analytics betika-search QUERY
-python -m backend.analytics betika-model --home TEAM --away TEAM
-```
-
----
-
 ## Confidence Score
 
 ```
@@ -392,4 +382,3 @@ The dashboard exports sessions as JSON arrays. Each record follows this schema:
   }
 }
 ```
-

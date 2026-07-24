@@ -12,6 +12,19 @@ The objective is to identify statistically positive Expected Value (EV) betting 
 
 The application should perform every task automatically with little or no user intervention.
 
+## Implementation Status
+
+The core platform is implemented and production-deployed on Streamlit Cloud. Recent changes include:
+
+- **Auto-analyze toggle** in sidebar — automatically analyzes every fixture when the Fixtures page loads
+- **Auto-refresh interval** — configurable 0–1800s slider for continuous automated updates
+- **Auto-Scan All Fixtures** button — one-click analysis of all visible fixtures
+- **Confidence-sorted feed** — all predictions ranked LOCK → STRONG → VALUE → LEAN → NO_BET
+- **Match Analyzer integration** — analyzed fixtures auto-populate the Match Analyzer dropdown
+- **Full pipeline execution** — `_build_match_model` now runs end-to-end (PredictionCard, PredictionLedger, PredictionPipelineV2)
+- **Error visibility** — failed fixtures show specific error messages instead of being silently swallowed
+- **Docker-ready** — `backend/requirements.txt` added, invalid `hashlib` package removed, Streamlit Cloud deployment succeeds
+
 --------------------------------------------------
 SYSTEM OBJECTIVES
 --------------------------------------------------

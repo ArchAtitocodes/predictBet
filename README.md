@@ -1,26 +1,107 @@
-# PredictBet AI — Institutional-Grade Football Betting Intelligence Engine
+# PredictBet — Elite Quantitative Football Betting Intelligence System
 
-PredictBet is a Python-based football betting analytics platform that scrapes live team data from multiple sources, builds Poisson GLM models with attack/defense ratings, Bayesian shrinkage, and recency-weighted decay, then benchmarks model probabilities against bookmaker market odds to surface positive expected value (EV) opportunities.
+A professional football betting analytics engine that scrapes real-time team data from multiple sources, builds Poisson GLM models with attack/defense ratings, evaluates multi-market odds, and provides aggressive staking recommendations via the Confidence Tier Engine.
+
+---
 
 ## Features
 
+- **Aggressive Prediction Engine** — Full-Kelly staking capped by confidence tier (`LOCK`, `STRONG`, `VALUE`, `LEAN`).
+- **Multi-Market Analysis** — Over/Under 1.5/3.5, Double Chance, Team Totals, Correct Score matrices.
+- **Live Data Scraping** — Betika API, ESPN API (team form, league averages, head-to-head), football-data.org
 - **Poisson GLM Modeling** — scipy MLE attack/defense optimizer, recency-weighted decay, Bayesian shrinkage
-- **Ensemble Diversity** — Blends Shrinkage + Dixon-Coles, MLE GLM, statsmodels GLM, sklearn Poisson, and ELO priors
-- **Multi-Market Analysis** — Over/Under 1.5/2.5/3.5, Double Chance, Team Totals, Correct Score matrices
-- **Live Data Scraping** — Betika API, ESPN API, ClubELO, Wikipedia, Understat, football-data.org
-- **ML Enhancement** — XGBoost/LightGBM gradient-boosted models on top of statistical base
-- **Probability Calibration** — Platt scaling, isotonic regression, Bayesian binning
+- **Ensemble Diversity** — Blends Shrinkage + Dixon-Coles, MLE GLM, and dynamic ELO priors.
+- **Scoreline Heatmap** — matplotlib probability grid (0–5 × 0–5 scoreline matrix)
 - **Market Edge Analysis** — de-vigged 1X2 comparison, overround calculation, edge quantification
-- **Confidence Tiers & Staking** — LOCK/STRONG/VALUE/LEAN/NO_BET with fractional-Kelly stake sizing and hard ceilings
-- **Audit Trail** — SQLite-backed PredictionLedger with Brier score, log loss, and calibration tables
-- **Backtesting** — Historical ROI, flat-stake simulation, binomial significance tests, closing-line value
-- **Monitoring** — Sliding-window metrics, alerting, data-source health tracking
-- **Interactive Dashboard** — Streamlit UI with auto-refresh, dark/light theme, CSV/JSON export
+- **Interactive Dashboard** — dark-mode web UI with Predictions Feed and Match Analyzer.
+- **CLI Tools** — headless model building, JSON export, fixture listing
+- **Automated Pipeline** — 9-step orchestrator from fixture ingestion to prediction output
+- **Confidence Sorting** — All predictions ranked LOCK → STRONG → VALUE → LEAN → NO_BET
+
+---
+
+## Recent Changes
+
+### Automation & UI
+- **Auto-analyze toggle** in sidebar — automatically analyzes every fixture when the Fixtures page loads
+- **Auto-refresh interval** — configurable 0–1800s slider for continuous automated updates
+- **Auto-Scan All Fixtures** button — one-click analysis of all visible fixtures
+- **Confidence-sorted feed** — all predictions ranked by confidence tier with edge % tiebreaker
+- **Match Analyzer integration** — analyzed fixtures auto-populate the Match Analyzer dropdown
+
+### Bug Fixes
+- Fixed `PredictionCard` as proper `@dataclass` — was previously an uninstantiable annotated class
+- Fixed `_build_match_model` dead code — full pipeline now executes end-to-end
+- Fixed undefined `fixture` variable — added safe `Optional[dict]` parameter
+- Fixed `PredictionLedger` import in `streamlit_app.py`
+- Fixed missing `backend/requirements.txt` for Docker builds
+- Fixed `streamlit_option_menu` dependency
+- Fixed `Tuple` import in `backend/analytics.py`
+- Fixed `bucket_size` scope bug in `backend/intelligence.py`
+- Fixed `fair_odds` undefined in `backend/pipeline.py`
+- Fixed `h2h_available` unexpected keyword in `backend/pipeline.py`
+- Fixed `home_info`/`away_info` undefined in `backend/pipeline.py`
+- Fixed `EvidenceChecklist` import in `backend/pipeline.py`
+- Fixed `Optional`/`Any` imports in `backend/scraper.py`
+- Removed invalid `hashlib>=4.0.0` from requirements (blocked deployment)
+- Removed duplicate requirements sections
+- Fixed silent exception swallowing — errors now reported per fixture
+
+---
+
+## Quick Start
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Start the dashboard server
+streamlit run streamlit_app.py
+
+# Or start the FastAPI server
+python -m uvicorn backend.server:app --host 0.0.0.0 --port 8080
+```
+
+---
+
+## Data Sources
+
+| Source | Coverage | Auth |
+|--------|----------|------|
+| Betika API | East Africa fixtures, odds, live | None (public) |
+| ESPN API | Global team search, schedules, results | None (public) |
+| ClubELO | Live ELO ratings with empirical fallback | None (public) |
+| football-data.org | European leagues, historical data | Free API key |
+| yfinance | Public club stock prices | None |
+| BeautifulSoup | HTML fallback scraping | None |
+
+Set `FOOTBALL_DATA_API_KEY=your_key_here` to enable football-data.org.
+
+---
+
+## Modelling Stack
+
+### Data Collection
+`requests`, `httpx`, `BeautifulSoup`, `soccerdata`, `statsbombpy`, `understat`, `yfinance`
+
+### Data Cleaning & Validation
+`pandas`, `polars`, `numpy`, `pyjanitor`, `great_expectations`, `pandera`
+
+### Statistical Modelling
+`scipy` (Poisson GLM MLE), `statsmodels`, `scikit-learn`, `xgboost`, `lightgbm`
+
+### Football Analytics
+`mplsoccer`, `kloppy`, `socceraction`
+
+### Visualization
+`matplotlib` (scoreline heatmap), `plotly`
+
+---
 
 ## Architecture
 
 ```text
-streamlit_app.py          — Primary UI (7 pages: Dashboard, Analyzer, Fixtures, Intel, History, Sites, Health)
+streamlit_app.py          — Primary UI (Dashboard, Analyzer, Fixtures, Intel, History, Sites, Health)
 backend/server.py         — FastAPI server (alternative API layer with CORS)
 backend/analytics.py      — Core engine: GLM fits, heatmaps, validation
 backend/scraper.py        — Data ingestion: Betika, ESPN, Wikipedia, Understat, etc.
@@ -38,118 +119,73 @@ backend/engine/           — Re-export of aiBetModel.staking
 backend/frontend/         — Vanilla HTML/CSS/JS dashboard
 ```
 
-## Quick Start
+**API Endpoints**
 
-```bash
-# Install dependencies
-pip install -r requirements.txt
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | Dashboard UI |
+| GET | `/api/predictions` | Aggressive auto-prediction feed |
+| GET | `/api/h2h` | Head-to-head historical data |
+| GET | `/api/form` | Form momentum and PPG trajectory |
+| GET | `/api/scrape` | Build model by team IDs |
+| GET | `/api/scrape_by_name` | Build model by team names |
+| GET | `/api/betika/scrape` | Build model from Betika fixture |
+| GET | `/api/betika/fixtures` | Upcoming Betika fixtures |
+| GET | `/api/betika/live` | Live Betika matches |
+| GET | `/api/search` | Search teams across ESPN + Betika |
+| GET | `/api/chart` | Serve scoreline heatmap PNG |
 
-# Start the Streamlit dashboard
-streamlit run streamlit_app.py
+---
 
-# Or start the FastAPI server
-python -m uvicorn backend.server:app --host 0.0.0.0 --port 8080
-```
-
-## Configuration
+## Environment Variables
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `PORT` | Server port | `8080` |
-| `HOST` | Bind address | `0.0.0.0` |
-| `FOOTBALL_DATA_API_KEY` | football-data.org API key | empty (optional) |
-| `BETIKA_BASE_URL` | Betika endpoint override | `https://api.betika.com` |
-| `CACHE_TTL_SECONDS` | Scraper cache TTL | `3600` |
+| `FOOTBALL_DATA_API_KEY` | football-data.org API key | None |
+| `BETIKA_BASE_URL` | Override Betika endpoint | `https://api.betika.com` |
 
-## Data Sources
+---
 
-| Source | Coverage | Auth |
-|--------|----------|------|
-| Betika API | East Africa fixtures, live odds | None |
-| ESPN API | Global team search, form, league averages | None |
-| ClubELO | Live ELO ratings with empirical fallback | None |
-| Understat | xG for/against per match | None |
-| Wikipedia | Club overviews, managers, stadiums | None |
-| yfinance | Public club stock prices | None |
-| football-data.org | European fixtures, results | Free API key |
+## Requirements
 
-## Modelling Stack
+Python 3.9+ and the packages in `requirements.txt`. Key packages:
 
-### Statistical
-- Poisson GLM via scipy MLE, statsmodels, and sklearn PoissonRegressor
-- Bayesian shrinkage with exponential recency decay (`decay=0.92`, `shrinkage_k=6.0`)
-- Dixon-Coles-style attack/defense ratings
-- Joint Poisson PMF for 1X2, O/U, BTTS, correct scores
-
-### ML
-- XGBoost and LightGBM on 10 feature groups (form, ELO, xG, market, H2H, league context, temporal, news, financial, advanced stats)
-- Versioned model persistence with schema validation
-- Model confidence feeds back into ensemble blending
-
-### Calibration
-- Platt scaling, isotonic regression, Bayesian binning, temperature scaling
-- Brier score and log loss tracked in PredictionLedger
-- Calibration tables: predicted bucket vs actual hit rate
-
-## Staking & Risk Management
-
-The system uses **fractional Kelly** with hard ceilings per confidence tier:
-
-| Tier | Edge Requirement | Min Confidence | Kelly Multiplier | Stake Ceiling |
-|------|-----------------|----------------|------------------|---------------|
-| `LOCK` | > 15pp | ≥ 60 | 100% | 10% |
-| `STRONG` | > 8pp | ≥ 50 | 50% | 5% |
-| `VALUE` | > 3pp | ≥ 35 | 25% | 3% |
-| `LEAN` | > 0pp | any | 0% | 1% |
-| `NO_BET` | ≤ 0pp | — | 0% | 0% |
-
-Stake = min(raw_kelly × multiplier, ceiling). Loss-chasing/martingale is explicitly refused.
-
-## Confidence Score
-
-```
-confidence = round(75 × (1 - exp(-n / 8)))
+```text
+requests httpx beautifulsoup4
+pandas polars numpy scipy statsmodels scikit-learn
+xgboost lightgbm mplsoccer kloppy yfinance matplotlib
+pandera great_expectations pyjanitor soccerdata
+streamlit streamlit-option-menu streamlit-aggrid
 ```
 
-Capped at 75 — never reaches 100 regardless of data volume.
-
-## Docker
-
-```bash
-docker-compose up --build
-```
-
-Container runs as non-root, exposes port 8080, includes healthcheck.
+---
 
 ## Project Structure
 
 ```text
-predictBet/
-├── streamlit_app.py
-├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
-├── .env
+PredictBet/
+├── streamlit_app.py      — Primary Streamlit UI
+├── requirements.txt       — Python dependencies
+├── Dockerfile             — Container build
+├── docker-compose.yml     — Compose config
+├── .env                   — Environment variables
 ├── backend/
-│   ├── server.py
-│   ├── analytics.py
-│   ├── scraper.py
-│   ├── intelligence.py
-│   ├── pipeline.py
-│   ├── market_pipeline.py
-│   ├── features.py
-│   ├── ml_pipeline.py
-│   ├── backtest.py
-│   ├── calibration.py
-│   ├── monitoring.py
-│   ├── config.py
-│   ├── migrations.py
-│   ├── aiBetModel/
-│   ├── engine/
-│   ├── eqfbis_models/
-│   └── frontend/
-└── eqfbis_models/
+│   ├── server.py          — FastAPI server
+│   ├── analytics.py       — Core engine: GLM fits, heatmaps
+│   ├── scraper.py         — Data collection, GLM modeling
+│   ├── intelligence.py    — Staking logic, confidence grading, PredictionLedger
+│   ├── pipeline.py        — 9-step automated orchestrator
+│   ├── market_pipeline.py — Ledger tracking, odds movement
+│   ├── backtest.py        — ROI evaluation
+│   ├── calibration.py     — Probability calibration
+│   ├── monitoring.py      — System observability
+│   ├── config.py          — Staking ceilings, Kelly multipliers
+│   ├── aiBetModel/        — Models, market, staking, quality, reports
+│   ├── engine/            — Re-export of aiBetModel.staking
+│   └── frontend/          — Vanilla HTML/CSS/JS dashboard
 ```
+
+---
 
 ## Streamlit Pages
 
@@ -161,6 +197,20 @@ predictBet/
 6. **Betting Sites** — Line shopping across scraped sites, best odds comparison
 7. **System Health** — Metrics, data source status, automation controls
 
+---
+
+## Automation
+
+The app supports three levels of automation:
+
+1. **Auto-analyze toggle** (sidebar) — When enabled, every fixture is automatically analyzed when the Fixtures page loads
+2. **Auto-refresh interval** (sidebar) — Set 0–1800 seconds; app reruns automatically and re-fetches fixtures
+3. **Auto-Scan All button** — One-click analysis of all fixtures in the current filtered view
+
+Results are automatically sorted by confidence tier (LOCK → STRONG → VALUE → LEAN → NO_BET) and appear in the Match Analyzer dropdown.
+
+---
+
 ## Key Design Principles
 
 - **Never fabricate data** — reduce confidence when unavailable
@@ -169,6 +219,7 @@ predictBet/
 - **Insufficient evidence → NO BET**
 - **Explicit uncertainty** — model disagreement widens reported uncertainty rather than hiding it
 - **Auditable** — every prediction is logged with outcomes for Brier/calibration scoring
+- **Fully automated** — from fixture ingestion to analysis to visualization with minimal user intervention
 
 ## License
 

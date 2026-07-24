@@ -536,20 +536,21 @@ class AggressiveStakeEngine:
 
 
 @dataclass
+@dataclass
 class PredictionCard:
-    match_label: str
-    match_date: str
-    competition: str
-    recommended_bet: str
-    confidence_tier: str
-    model_probability: float
-    market_implied_probability: float
-    edge_pct: float
-    stake_suggestion_pct: float
-    signals: dict
-    multi_market_predictions: dict
-    scouting_narrative: str
-    model_data: dict
+    match_label: str = ""
+    match_date: str = ""
+    competition: str = ""
+    recommended_bet: str = ""
+    confidence_tier: str = "NO_BET"
+    model_probability: float = 0.0
+    market_implied_probability: float = 0.0
+    edge_pct: float = 0.0
+    stake_suggestion_pct: float = 0.0
+    signals: dict = field(default_factory=dict)
+    multi_market_predictions: dict = field(default_factory=dict)
+    scouting_narrative: str = ""
+    model_data: dict = field(default_factory=dict)
 
 
 def generate_aggressive_narrative(model: dict, signals: dict, tier: ConfidenceTier, recommended_bet: str) -> str:

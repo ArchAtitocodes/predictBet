@@ -81,6 +81,7 @@ from backend.intelligence import (
     PredictionCard,
     PredictionPipelineV2,
     MLEnhancedEnsemble,
+    PredictionLedger,
 )
 from backend.aiBetModel.integration import (
     build_market_assessments,
@@ -315,6 +316,19 @@ def _safe_int(val: Any, default: int = 0) -> int:
         return default
 
 
+_TIER_ORDER = {"LOCK": 0, "STRONG": 1, "VALUE": 2, "LEAN": 3, "NO_BET": 4}
+
+
+def _sorted_predictions() -> list[dict]:
+    def sort_key(p: dict) -> tuple[int, float]:
+        tier_rank = _TIER_ORDER.get(str(p.get("confidence_tier", "NO_BET")).upper(), 99)
+        confidence = float(p.get("confidence_score", 0) or 0)
+        edge = float(p.get("edge_pct", 0) or 0)
+        return (tier_rank, -confidence, -edge)
+
+    return sorted(st.session_state.predictions, key=sort_key)
+
+
 def _init_session():
     if "predictions" not in st.session_state:
         st.session_state.predictions = []
@@ -332,6 +346,10 @@ def _init_session():
         st.session_state.highlight_filter = "All"
     if "selected_match_label" not in st.session_state:
         st.session_state.selected_match_label = None
+    if "auto_analyze" not in st.session_state:
+        st.session_state.auto_analyze = False
+    if "auto_analyze_running" not in st.session_state:
+        st.session_state.auto_analyze_running = False
     if THEME_KEY not in st.session_state:
         st.session_state[THEME_KEY] = "dark"
 
@@ -549,84 +567,6 @@ def _build_match_model(home_name: str, away_name: str, odds_h: float = 0, odds_d
         "home_momentum": momentum_home,
         "away_momentum": momentum_away,
     }, ConfidenceTier[tier], best_outcome.capitalize() + " Win" if best_outcome != "none" else "")
-
-    return {
-        "match_label": f"{home_form.team_name} vs {away_form.team_name}",
-        "home_team": home_form.team_name,
-        "away_team": away_form.team_name,
-        "start_time": "",
-        "competition_name": league_slug,
-        "category": "",
-        "venue": home_intel.get("stadium"),
-        "manager_home": home_intel.get("manager"),
-        "manager_away": away_intel.get("manager"),
-        "squad_value_home": home_intel.get("squad_value"),
-        "squad_value_away": away_intel.get("squad_value"),
-        "elo_home": home_intel.get("elo"),
-        "elo_away": away_intel.get("elo"),
-        "expected_home_goals": round(model.expected_home_goals, 2),
-        "expected_away_goals": round(model.expected_away_goals, 2),
-        "xga_home": round(model.expected_away_goals, 2),
-        "xga_away": round(model.expected_home_goals, 2),
-        "home_win_prob": round(model.home_win_prob * 100, 1),
-        "draw_prob": round(model.draw_prob * 100, 1),
-        "away_win_prob": round(model.away_win_prob * 100, 1),
-        "over_1_5_prob": round(multi.get("over_1_5_prob", 0) * 100, 1),
-        "over_2_5_prob": round(model.over_2_5_prob * 100, 1),
-        "over_3_5_prob": round(multi.get("over_3_5_prob", 0) * 100, 1),
-        "under_2_5_prob": round(model.under_2_5_prob * 100, 1),
-        "btts_yes_prob": round(model.btts_yes_prob * 100, 1),
-        "double_chance_1x": round(multi.get("double_chance_1x", 0) * 100, 1),
-        "double_chance_12": round(multi.get("double_chance_12", 0) * 100, 1),
-        "double_chance_x2": round(multi.get("double_chance_x2", 0) * 100, 1),
-        "correct_score_top5": multi.get("correct_score_top5", []),
-        "most_likely_score": multi.get("most_likely_score", "0-0"),
-        "home_over_0_5": round(multi.get("home_over_0_5", 0) * 100, 1),
-        "home_over_1_5": round(multi.get("home_over_1_5", 0) * 100, 1),
-        "away_over_0_5": round(multi.get("away_over_0_5", 0) * 100, 1),
-        "away_over_1_5": round(multi.get("away_over_1_5", 0) * 100, 1),
-        "best_outcome": best_outcome,
-        "edge_pct": round(best_edge, 1),
-        "ev_pct": round(ev_pct, 1),
-        "fair_odds_best": round(fair_odds, 2),
-        "confidence_tier": tier,
-        "confidence_score": confidence_raw,
-        "risk_score": round(risk_score, 0),
-        "risk_label": risk_label,
-        "stake_suggestion_pct": round(stake_pct, 2),
-        "conservative_stake_pct": round(conservative_stake_obj.capped_fraction * 100, 2),
-        "conservative_stake_note": conservative_stake_obj.note,
-        "market_efficiency": efficiency_class,
-        "market_assessments": market_assessments_data,
-        "stake_recommendations": stake_recs_data,
-        "conservative_scouting_narrative": conservative_narrative,
-        "comparison_table_md": comparison_table_md,
-        "implied_probs_list": implied_probs_list,
-        "fair_probs_list": fair_probs_list,
-        "data_grade": data_grade,
-        "market_overround_pct": market_comp.get("bookmaker_overround_pct") if market_comp else None,
-        "model_prob_best": round(best_model_prob * 100, 1) if best_outcome != "none" else None,
-        "market_implied_best": round(best_market_implied, 1) if best_outcome != "none" else None,
-        "model": model.__dict__,
-        "market_comparison": market_comp,
-        "momentum_home": momentum_home,
-        "momentum_away": momentum_away,
-        "h2h_summary": h2h_summary,
-        "h2h_available": bool(h2h_raw),
-        "h2h_matches": h2h_raw[:5] if h2h_raw else [],
-        "scouting_narrative": narrative,
-        "sample_size_home": home_form.matches_played,
-        "sample_size_away": away_form.matches_played,
-        "reasons_for": reasons_for,
-        "reasons_against": reasons_against,
-        "elo_available": home_intel.get("elo") is not None,
-        "xg_available": True,
-        "lineups_confirmed": False,
-        "injuries_verified": False,
-        "conflicting_sources": ensemble.agreement_score < 0.6 if ensemble else False,
-        "model_agreement_score": ensemble.agreement_score if ensemble else 0.5,
-        "estimators_used": ["scipy_mle", "statsmodels_glm", "sklearn_poisson", "elo_prior"],
-    }
 
     result = {
         "match_label": f"{home_form.team_name} vs {away_form.team_name}",
@@ -1163,7 +1103,7 @@ def render_value_bets_dashboard():
                 unsafe_allow_html=True)
 
     col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
-    preds = st.session_state.predictions
+    preds = _sorted_predictions()
     with col_m1:
         st.metric("Total Analyzed", len(preds))
     with col_m2:
@@ -1290,30 +1230,35 @@ def render_match_analyzer():
     tab_source, tab_manual = st.tabs(["From Feed", "Manual Input"])
 
     with tab_source:
-        if not st.session_state.predictions:
+        sorted_preds = _sorted_predictions()
+        if not sorted_preds:
             st.info("No predictions in feed. Use Manual Input or Betika Fixtures to add matches.")
         else:
-            labels = [f"{p['home_team']} vs {p['away_team']}" for p in st.session_state.predictions]
+            labels = [f"[{p.get('confidence_tier', 'NO_BET')}] {p['home_team']} vs {p['away_team']}" for p in sorted_preds]
             sel_label = st.selectbox("Choose fixture", options=labels, key="analyzer_feed_select")
             idx = labels.index(sel_label) if sel_label in labels else 0
+            selected_pred = sorted_preds[idx]
             if st.button("Re-Scan This Match", type="primary"):
                 with st.spinner(f"Re-scanning {sel_label}..."):
                     try:
-                        sel = st.session_state.predictions[idx]
-                        oh = _safe_float(sel.get("home_odd", 0))
-                        od = _safe_float(sel.get("draw_odd", 0))
-                        oa = _safe_float(sel.get("away_odd", 0))
-                        rec = _build_match_model(sel["home_team"], sel["away_team"], oh, od, oa)
-                        rec["start_time"] = sel.get("start_time", "")
-                        rec["competition_name"] = sel.get("competition_name", "")
-                        rec["category"] = sel.get("category", "")
-                        st.session_state.predictions[idx] = rec
+                        oh = _safe_float(selected_pred.get("home_odd", 0))
+                        od = _safe_float(selected_pred.get("draw_odd", 0))
+                        oa = _safe_float(selected_pred.get("away_odd", 0))
+                        rec = _build_match_model(selected_pred["home_team"], selected_pred["away_team"], oh, od, oa)
+                        rec["start_time"] = selected_pred.get("start_time", "")
+                        rec["competition_name"] = selected_pred.get("competition_name", "")
+                        rec["category"] = selected_pred.get("category", "")
+                        match_label = selected_pred.get("match_label", "")
+                        for i, p in enumerate(st.session_state.predictions):
+                            if p.get("match_label") == match_label:
+                                st.session_state.predictions[i] = rec
+                                break
                         st.success("Match re-scanned.")
                         st.rerun()
                     except Exception as ex:
                         st.error(str(ex))
-            if st.session_state.predictions:
-                _render_match_detail(st.session_state.predictions[idx])
+            if sorted_preds:
+                _render_match_detail(selected_pred)
 
     with tab_manual:
         colh, cola = st.columns(2)
@@ -1408,6 +1353,25 @@ def render_betika_fixtures():
                     df = df[df["home_odd"].notna() & df["draw_odd"].notna() & df["away_odd"].notna()]
                 st.dataframe(df, use_container_width=True, hide_index=True)
                 st.caption(f"Showing {len(df)} fixtures")
+                if st.session_state.get("auto_analyze", False) and not st.session_state.get("auto_analyze_running", False):
+                    st.session_state.auto_analyze_running = True
+                    progress = st.progress(0.0, text="Auto-analyzing all fixtures...")
+                    results = []
+                    errors = []
+                    for i, (idx, row) in enumerate(df.iterrows()):
+                        rec = _analyze_fixture_row(row)
+                        if rec and "_error" not in rec:
+                            results.append(rec)
+                        elif rec and "_error" in rec:
+                            errors.append(rec["_error"])
+                        progress.progress((i + 1) / len(df), text=f"Processed {i + 1}/{len(df)}")
+                    st.session_state.predictions.extend(results)
+                    st.session_state.auto_analyze_running = False
+                    if errors:
+                        st.warning(f"Auto-analyzed: added {len(results)}, {len(errors)} failed.")
+                    else:
+                        st.success(f"Auto-analyzed {len(results)} fixtures. Results are now in the feed.")
+                    progress.progress(1.0, text="Done.")
                 _batch_analyze(df, "Today")
         except Exception as ex:
             st.error(f"Error fetching upcoming fixtures: {ex}")
@@ -1424,37 +1388,91 @@ def render_betika_fixtures():
                 )
                 st.dataframe(df, use_container_width=True, hide_index=True)
                 st.caption(f"Showing {len(df)} live matches")
+                if st.session_state.get("auto_analyze", False) and not st.session_state.get("auto_analyze_running", False):
+                    st.session_state.auto_analyze_running = True
+                    progress = st.progress(0.0, text="Auto-analyzing live matches...")
+                    results = []
+                    errors = []
+                    for i, (idx, row) in enumerate(df.iterrows()):
+                        rec = _analyze_fixture_row(row)
+                        if rec and "_error" not in rec:
+                            results.append(rec)
+                        elif rec and "_error" in rec:
+                            errors.append(rec["_error"])
+                        progress.progress((i + 1) / len(df), text=f"Processed {i + 1}/{len(df)}")
+                    st.session_state.predictions.extend(results)
+                    st.session_state.auto_analyze_running = False
+                    if errors:
+                        st.warning(f"Auto-analyzed: added {len(results)}, {len(errors)} failed.")
+                    else:
+                        st.success(f"Auto-analyzed {len(results)} live matches. Results are now in the feed.")
+                    progress.progress(1.0, text="Done.")
                 _batch_analyze(df, "Live")
         except Exception as ex:
             st.error(f"Error fetching live matches: {ex}")
+
+
+def _analyze_fixture_row(row) -> Optional[dict]:
+    try:
+        oh = _safe_float(row.get("home_odd"))
+        od = _safe_float(row.get("draw_odd"))
+        oa = _safe_float(row.get("away_odd"))
+        rec = _build_match_model(row["home_team"], row["away_team"], oh, od, oa)
+        for k in ("start_time", "competition_name", "category", "match_id", "home_odd", "draw_odd", "away_odd"):
+            rec[k] = row.get(k, rec.get(k, ""))
+        return rec
+    except Exception as ex:
+        return {"_error": f"{row['home_team']} vs {row['away_team']}: {str(ex)[:120]}"}
 
 
 def _batch_analyze(df: pd.DataFrame, context: str):
     if df.empty:
         return
     st.markdown(f"**Build Market Models for {context} Fixtures**")
+    col_a1, col_a2, col_a3 = st.columns([2, 2, 2])
+    with col_a1:
+        if st.button(f"Auto-Scan All {context} Fixtures", key=f"btn_{context}_auto", type="primary"):
+            progress = st.progress(0.0, text="Analyzing all fixtures...")
+            results = []
+            errors = []
+            for i, (idx, row) in enumerate(df.iterrows()):
+                rec = _analyze_fixture_row(row)
+                if rec and "_error" not in rec:
+                    results.append(rec)
+                elif rec and "_error" in rec:
+                    errors.append(rec["_error"])
+                progress.progress((i + 1) / len(df), text=f"Processed {i + 1}/{len(df)}")
+            st.session_state.predictions.extend(results)
+            if errors:
+                st.warning(f"Added {len(results)} predictions. {len(errors)} failed:\n" + "\n".join(errors[:10]))
+            else:
+                st.success(f"Added {len(results)} predictions to the feed.")
+            progress.progress(1.0, text="Done.")
+    with col_a2:
+        st.caption(f"Total fixtures available: {len(df)}")
+    with col_a3:
+        st.caption(f"Currently in feed: {len(_sorted_predictions())}")
+
     options = [f"{r.home_team} vs {r.away_team} — {r.competition_name}" for r in df.itertuples()]
     selected = st.multiselect("Select fixtures to analyze", options=options, key=f"sel_{context}_batch")
     if selected and st.button("Analyze Selected", key=f"btn_{context}_batch", type="primary"):
         progress = st.progress(0.0, text="Analyzing...")
         results = []
+        errors = []
         for i, sel in enumerate(selected):
             idx = options.index(sel)
             row = df.iloc[idx]
-            try:
-                oh = _safe_float(row.get("home_odd"))
-                od = _safe_float(row.get("draw_odd"))
-                oa = _safe_float(row.get("away_odd"))
-                rec = _build_match_model(row["home_team"], row["away_team"], oh, od, oa)
-                rec["start_time"] = row.get("start_time", "")
-                rec["competition_name"] = row.get("competition_name", "")
-                rec["category"] = row.get("category", "")
+            rec = _analyze_fixture_row(row)
+            if rec and "_error" not in rec:
                 results.append(rec)
-            except Exception:
-                pass
+            elif rec and "_error" in rec:
+                errors.append(rec["_error"])
             progress.progress((i + 1) / len(selected), text=f"Processed {i + 1}/{len(selected)}")
         st.session_state.predictions.extend(results)
-        st.success(f"Added {len(results)} predictions to the feed. Open Dashboard to view.")
+        if errors:
+            st.warning(f"Added {len(results)} predictions. {len(errors)} failed:\n" + "\n".join(errors[:10]))
+        else:
+            st.success(f"Added {len(results)} predictions to the feed. Open Dashboard to view.")
         progress.progress(1.0, text="Done.")
 
 
@@ -1645,7 +1663,7 @@ def render_system_health():
     with col1:
         st.metric("Status", "Healthy", delta="Operational")
     with col2:
-        st.metric("Predictions in Feed", len(st.session_state.predictions))
+        st.metric("Predictions in Feed", len(_sorted_predictions()))
     with col3:
         st.metric("Betting Sites", len(betting_site_registry.get_all_sites()))
     with col4:
@@ -1722,9 +1740,9 @@ def render_bankroll_portfolio():
         col_a, col_b = st.columns(2)
         with col_a:
             st.subheader("Place Paper Trade")
-            preds = st.session_state.predictions
+            preds = _sorted_predictions()
             if preds:
-                options = [f"{p['home_team']} vs {p['away_team']} — {p.get('best_outcome', 'N/A')}" for p in preds]
+                options = [f"[{p.get('confidence_tier', 'NO_BET')}] {p['home_team']} vs {p['away_team']} — {p.get('best_outcome', 'N/A')}" for p in preds]
                 sel = st.selectbox("Select prediction", options=options, key="bankroll_sel")
                 idx = options.index(sel) if sel in options else 0
                 p = preds[idx]
@@ -1927,6 +1945,24 @@ def run_app():
         st.markdown("---")
         st.caption("Automated workflow:\n1. Fetch fixtures\n2. Scrape form + xG\n3. Ensemble models\n4. De-vig markets\n5. EV + Kelly\n6. Rank & report")
         st.caption("Never fabricate data.\nInsufficient evidence → NO BET.")
+
+        st.markdown("---")
+        st.subheader("Automation")
+        st.session_state.auto_analyze = st.checkbox(
+            "Auto-analyze all fixtures on load",
+            value=st.session_state.get("auto_analyze", False),
+            key="auto_analyze_toggle",
+            help="Automatically analyze every fixture when the Fixtures page loads."
+        )
+        st.session_state.refresh_interval = st.slider(
+            "Auto-refresh interval (seconds)",
+            min_value=0,
+            max_value=1800,
+            value=int(st.session_state.get("refresh_interval", 0)),
+            step=60,
+            key="refresh_slider",
+            help="0 = disabled. Re-runs the app every N seconds."
+        )
 
     page_map = {
         "Dashboard (Value Bets)": "Dashboard (Value Bets)",

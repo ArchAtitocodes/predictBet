@@ -37,8 +37,8 @@ import http.server
 import webbrowser
 from datetime import datetime
 from urllib.parse import parse_qs, urlparse
-from typing import Optional
-from backend.pipeline import AutomatedPredictionPipeline
+from typing import Optional, Tuple
+from backend.pipeline import AutomatedPredictionPipeline, FixtureEnrichment
 
 def _math_exponential_decay(rate: float, time_step: float) -> float:
     return math.exp(-rate * time_step)
@@ -116,6 +116,7 @@ _FRONTEND_DIR = os.path.join(_PROJECT_ROOT, "frontend")
 _pipeline_lock = threading.Lock()
 _pipeline_singleton = None
 
+
 def get_pipeline() -> "AutomatedPredictionPipeline":
     global _pipeline_singleton
     if _pipeline_singleton is None:
@@ -125,6 +126,31 @@ def get_pipeline() -> "AutomatedPredictionPipeline":
                 _pipeline_singleton = AutomatedPredictionPipeline(max_workers=4)
                 _pipeline_singleton.run_full_pipeline(fixture_limit=50)
     return _pipeline_singleton
+
+
+# ---------------------------------------------------------------------------
+# OOP wrappers using pipeline classes
+# ---------------------------------------------------------------------------
+
+class PredictionService:
+    """Facade over pipeline classes for consistent OOP usage."""
+
+    def __init__(self):
+        from pipeline import FixtureEnricher, MarketEvaluator, BetRefusalEngine
+        self.enricher = FixtureEnricher()
+        self.evaluator = MarketEvaluator()
+        self.refusal_engine = BetRefusalEngine()
+
+    def enrich_fixture(self, fixture: dict) -> Optional[FixtureEnrichment]:
+        return self.enricher.enrich(fixture)
+
+    def evaluate_fixture(self, model, market_comp, enrichment) -> dict:
+        return self.evaluator.evaluate(model, market_comp, enrichment)
+
+    def should_reject(self, enrichment, evaluation) -> Tuple[bool, Optional[str]]:
+        return self.refusal_engine.should_reject(enrichment, evaluation)
+
+
 # ---------------------------------------------------------------------------
 # Advanced Modeling and Visualization
 # ---------------------------------------------------------------------------
@@ -1089,13 +1115,33 @@ class AnalyticsHTTPHandler(http.server.BaseHTTPRequestHandler):
 
                         market_comp = compare_to_market(model, odds_home, odds_draw, odds_away)
 
+                        prediction_service = PredictionService()
+                        enrichment_for_eval = FixtureEnrichment(
+                            fixture=fixture,
+                            home_form=home_form,
+                            away_form=away_form,
+                            bookmaker_odds={"home": odds_home, "draw": odds_draw, "away": odds_away},
+                        )
+                        evaluation = prediction_service.evaluate_fixture(model, market_comp, enrichment_for_eval)
+                        should_reject, refusal_reason = prediction_service.should_reject(enrichment_for_eval, evaluation)
+                        if should_reject:
+                            evaluation["best_outcome"] = "none"
+                            evaluation["ev_pct"] = 0.0
+                            evaluation["edge_pct"] = 0.0
+                            evaluation["refusal_reason"] = refusal_reason
+
                         edges = {
-                            "home": market_comp["home"]["edge_pct_points"],
-                            "draw": market_comp["draw"]["edge_pct_points"],
-                            "away": market_comp["away"]["edge_pct_points"],
+                            "home": evaluation.get("best_outcome") and evaluation.get("edge_pct", 0),
+                            "away": evaluation.get("edge_pct", 0),
+                            "draw": evaluation.get("edge_pct", 0),
                         }
-                        best_outcome = max(edges, key=edges.get)
-                        best_edge = edges[best_outcome]
+                        best_outcome_raw = evaluation.get("best_outcome", "none")
+                        if best_outcome_raw in edges:
+                            best_outcome = best_outcome_raw
+                            best_edge = evaluation.get("edge_pct", 0)
+                        else:
+                            best_outcome = "none"
+                            best_edge = 0.0
 
                         if best_outcome == "home":
                             model_prob = model.home_win_prob

@@ -36,8 +36,10 @@ import plotly.express as px
 
 try:
     import streamlit as st
+    from streamlit_option_menu import option_menu
 except ImportError:
     st = None
+    option_menu = None
 
 _BACKEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend")
 if _BACKEND_DIR not in sys.path:
@@ -76,6 +78,9 @@ from backend.intelligence import (
     generate_scouting_narrative,
     suggest_stake,
     build_ensemble,
+    PredictionCard,
+    PredictionPipelineV2,
+    MLEnhancedEnsemble,
 )
 from backend.aiBetModel.integration import (
     build_market_assessments,
@@ -378,7 +383,17 @@ def _fetch_team_intel(team_name: str, league_slug: str) -> dict:
 
 
 def _build_match_model(home_name: str, away_name: str, odds_h: float = 0, odds_d: float = 0, odds_a: float = 0,
-                        decay: float = 0.92, shrinkage_k: float = 6.0, home_advantage: float = 1.0):
+                        decay: float = 0.92, shrinkage_k: float = 6.0, home_advantage: float = 1.0,
+                        fixture: Optional[dict] = None):
+    _settings_decay = _safe_float(st.session_state.get("default_decay"), decay)
+    _settings_k = _safe_float(st.session_state.get("default_shrinkage_k"), shrinkage_k)
+    _settings_hadv = _safe_float(st.session_state.get("default_home_adv"), home_advantage)
+    if decay == 0.92:
+        decay = _settings_decay
+    if shrinkage_k == 6.0:
+        shrinkage_k = _settings_k
+    if home_advantage == 1.0:
+        home_advantage = _settings_hadv
     espn = ESPNScraperClient()
     home_results = espn.search_team(home_name)
     away_results = espn.search_team(away_name)
@@ -403,6 +418,8 @@ def _build_match_model(home_name: str, away_name: str, odds_h: float = 0, odds_d
     market_comp = None
     if odds_h > 1.0 and odds_d > 1.0 and odds_a > 1.0:
         market_comp = compare_to_market(model, odds_h, odds_d, odds_a)
+
+    devig_probs = devig_1x2(odds_h, odds_d, odds_a)
 
     multi = MultiMarketPredictor.predict(model.expected_home_goals, model.expected_away_goals)
     momentum_home = FormMomentumCalculator.calculate(home_form)
@@ -611,13 +628,135 @@ def _build_match_model(home_name: str, away_name: str, odds_h: float = 0, odds_d
         "estimators_used": ["scipy_mle", "statsmodels_glm", "sklearn_poisson", "elo_prior"],
     }
 
+    result = {
+        "match_label": f"{home_form.team_name} vs {away_form.team_name}",
+        "home_team": home_form.team_name,
+        "away_team": away_form.team_name,
+        "start_time": "",
+        "competition_name": league_slug,
+        "category": "",
+        "venue": home_intel.get("stadium"),
+        "manager_home": home_intel.get("manager"),
+        "manager_away": away_intel.get("manager"),
+        "squad_value_home": home_intel.get("squad_value"),
+        "squad_value_away": away_intel.get("squad_value"),
+        "elo_home": home_intel.get("elo"),
+        "elo_away": away_intel.get("elo"),
+        "expected_home_goals": round(model.expected_home_goals, 2),
+        "expected_away_goals": round(model.expected_away_goals, 2),
+        "xga_home": round(model.expected_away_goals, 2),
+        "xga_away": round(model.expected_home_goals, 2),
+        "home_win_prob": round(model.home_win_prob * 100, 1),
+        "draw_prob": round(model.draw_prob * 100, 1),
+        "away_win_prob": round(model.away_win_prob * 100, 1),
+        "over_1_5_prob": round(multi.get("over_1_5_prob", 0) * 100, 1),
+        "over_2_5_prob": round(model.over_2_5_prob * 100, 1),
+        "over_3_5_prob": round(multi.get("over_3_5_prob", 0) * 100, 1),
+        "under_2_5_prob": round(multi.get("under_2_5_prob", 0) * 100, 1),
+        "btts_yes_prob": round(multi.get("btts_yes_prob", 0) * 100, 1),
+        "double_chance_1x": round(multi.get("double_chance_1x", 0) * 100, 1),
+        "double_chance_12": round(multi.get("double_chance_12", 0) * 100, 1),
+        "double_chance_x2": round(multi.get("double_chance_x2", 0) * 100, 1),
+        "correct_score_top5": multi.get("correct_score_top5", []),
+        "most_likely_score": multi.get("most_likely_score", "0-0"),
+        "home_over_0_5": round(multi.get("home_over_0_5", 0) * 100, 1),
+        "home_over_1_5": round(multi.get("home_over_1_5", 0) * 100, 1),
+        "away_over_0_5": round(multi.get("away_over_0_5", 0) * 100, 1),
+        "away_over_1_5": round(multi.get("away_over_1_5", 0) * 100, 1),
+        "best_outcome": best_outcome,
+        "edge_pct": round(best_edge, 1),
+        "ev_pct": round(ev_pct, 1),
+        "fair_odds_best": round(fair_odds, 2),
+        "confidence_tier": tier,
+        "confidence_score": confidence_raw,
+        "risk_score": round(risk_score, 0),
+        "risk_label": risk_label,
+        "stake_suggestion_pct": round(stake_pct, 2),
+        "conservative_stake_pct": round(conservative_stake_obj.capped_fraction * 100, 2),
+        "conservative_stake_note": conservative_stake_obj.note,
+        "market_efficiency": efficiency_class,
+        "market_assessments": market_assessments_data,
+        "stake_recommendations": stake_recs_data,
+        "conservative_scouting_narrative": conservative_narrative,
+        "comparison_table_md": comparison_table_md,
+        "implied_probs_list": implied_probs_list,
+        "fair_probs_list": fair_probs_list,
+        "data_grade": data_grade,
+        "market_overround_pct": market_comp.get("bookmaker_overround_pct") if market_comp else None,
+        "model_prob_best": round(best_model_prob * 100, 1) if best_outcome != "none" else None,
+        "market_implied_best": round(best_market_implied, 1) if best_outcome != "none" else None,
+        "model": model.__dict__,
+        "market_comparison": market_comp,
+        "momentum_home": momentum_home,
+        "momentum_away": momentum_away,
+        "h2h_summary": h2h_summary,
+        "h2h_available": bool(h2h_raw),
+        "h2h_matches": h2h_raw[:5] if h2h_raw else [],
+        "scouting_narrative": narrative,
+        "sample_size_home": home_form.matches_played,
+        "sample_size_away": away_form.matches_played,
+        "reasons_for": reasons_for,
+        "reasons_against": reasons_against,
+        "elo_available": home_intel.get("elo") is not None,
+        "xg_available": True,
+        "lineups_confirmed": False,
+        "injuries_verified": False,
+        "conflicting_sources": ensemble.agreement_score < 0.6 if ensemble else False,
+        "model_agreement_score": ensemble.agreement_score if ensemble else 0.5,
+        "estimators_used": ["scipy_mle", "statsmodels_glm", "sklearn_poisson", "elo_prior"],
+    }
+
+    card = PredictionCard(
+        match_label=result.get("match_label", ""),
+        match_date=result.get("start_time", ""),
+        competition=result.get("competition_name", ""),
+        recommended_bet=result.get("best_outcome", ""),
+        confidence_tier=result.get("confidence_tier", "NO_BET"),
+        model_probability=result.get("model_prob_best", 0) / 100 if result.get("model_prob_best") else 0,
+        market_implied_probability=result.get("market_implied_best", 0) / 100 if result.get("market_implied_best") else 0,
+        edge_pct=result.get("edge_pct", 0),
+        stake_suggestion_pct=result.get("stake_suggestion_pct", 0),
+        signals={
+            "home_momentum": momentum_home,
+            "away_momentum": momentum_away,
+        },
+        multi_market_predictions=market_comp,
+        scouting_narrative=narrative,
+        model_data=model.__dict__,
+    )
+
+    try:
+        ledger = PredictionLedger()
+        ledger.log(
+            model=model,
+            agreement_score=ensemble.agreement_score if ensemble else 1.0,
+        )
+    except Exception:
+        pass
+
+    try:
+        v2 = PredictionPipelineV2()
+        v2_result = v2.predict(
+            home_form, away_form, league_slug=league_slug,
+            match_date=result.get("start_time", ""),
+            odds_home=odds_h, odds_draw=odds_d, odds_away=odds_a,
+            match_id=fixture.get("match_id", "") if fixture else "",
+        )
+        if v2_result:
+            card.model_data = {**card.model_data, "pipeline_v2": v2_result}
+    except Exception:
+        pass
+
+    result["prediction_card_object"] = card.__dict__
+    return result
+
 
 def _scan_fixture_worker(fixture: dict) -> Optional[dict]:
     try:
         oh = _safe_float(fixture.get("home_odd"))
         od = _safe_float(fixture.get("draw_odd"))
         oa = _safe_float(fixture.get("away_odd"))
-        rec = _build_match_model(fixture["home_team"], fixture["away_team"], oh, od, oa)
+        rec = _build_match_model(fixture["home_team"], fixture["away_team"], oh, od, oa, fixture=fixture)
         for k in ("start_time", "competition_name", "category", "match_id",
                   "home_odd", "draw_odd", "away_odd"):
             rec[k] = fixture.get(k, rec.get(k, ""))
@@ -774,6 +913,46 @@ def _render_match_detail(row: dict):
     with c7:
         st.metric("Risk", row.get("risk_label", "N/A"))
 
+    chart_c1, chart_c2 = st.columns(2)
+    with chart_c1:
+        try:
+            prob_df = pd.DataFrame({
+                "Outcome": ["Home Win", "Draw", "Away Win"],
+                "Probability": [row.get("home_win_prob", 0), row.get("draw_prob", 0), row.get("away_win_prob", 0)],
+            })
+            fig_probs = px.bar(
+                prob_df,
+                x="Outcome",
+                y="Probability",
+                title="Win Probabilities",
+                color="Outcome",
+                color_discrete_map={"Home Win": "#00E5FF", "Draw": "#7C3AED", "Away Win": "#EF4444"},
+            )
+            fig_probs.update_layout(yaxis_title="Probability (%)", showlegend=False)
+            st.plotly_chart(fig_probs, use_container_width=True)
+        except Exception:
+            st.caption("Probability chart unavailable.")
+    with chart_c2:
+        try:
+            gauge_val = min(max(row.get("confidence_score", 0), 0), 100)
+            fig_gauge = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=gauge_val,
+                title={"text": "Confidence Score"},
+                gauge={
+                    "axis": {"range": [0, 100]},
+                    "bar": {"color": "#00E5FF"},
+                    "steps": [
+                        {"range": [0, 35], "color": "#EF4444"},
+                        {"range": [35, 60], "color": "#F59E0B"},
+                        {"range": [60, 100], "color": "#22C55E"},
+                    ],
+                },
+            ))
+            st.plotly_chart(fig_gauge, use_container_width=True)
+        except Exception:
+            st.caption("Gauge chart unavailable.")
+
     tab_market, tab_edge, tab_team, tab_momentum, tab_models, tab_narrative, tab_report = st.tabs([
         "Markets", "Market Edge", "Team Comparison", "Momentum & Form", "Model Agreement", "Narrative", "Full Report"
     ])
@@ -802,6 +981,34 @@ def _render_match_detail(row: dict):
             cs_df = pd.DataFrame(top5)
             st.dataframe(cs_df, use_container_width=True, hide_index=True)
         st.write(f"**Most Likely Score:** {row.get('most_likely_score', 'N/A')}")
+
+        try:
+            exp_h = row.get("expected_home_goals", 1.5)
+            exp_a = row.get("expected_away_goals", 1.5)
+            max_goals = 6
+            z = []
+            for hg in range(max_goals + 1):
+                row_probs = []
+                for ag in range(max_goals + 1):
+                    p = poisson_pmf(hg, exp_h) * poisson_pmf(ag, exp_a)
+                    row_probs.append(p)
+                z.append(row_probs)
+            fig_hm = go.Figure(data=go.Heatmap(
+                z=z,
+                x=[str(g) for g in range(max_goals + 1)],
+                y=[str(g) for g in range(max_goals + 1)],
+                colorscale="Viridis",
+                colorbar={"title": "Probability"},
+                hoverongaps=False,
+            ))
+            fig_hm.update_layout(
+                title="Goal Probability Heatmap",
+                xaxis_title="Away Goals",
+                yaxis_title="Home Goals",
+            )
+            st.plotly_chart(fig_hm, use_container_width=True)
+        except Exception:
+            st.caption("Heatmap unavailable.")
 
     with tab_edge:
         mc = row.get("market_comparison")
@@ -888,6 +1095,18 @@ def _render_match_detail(row: dict):
             ])
             st.dataframe(model_outcomes, use_container_width=True, hide_index=True)
 
+            try:
+                outcomes = ["Home Win", "Draw", "Away Win"]
+                model_vals = [row["home_win_prob"], row["draw_prob"], row["away_win_prob"]]
+                market_vals = [mc["home"]["market_implied_pct"], mc["draw"]["market_implied_pct"], mc["away"]["market_implied_pct"]]
+                fig_cmp = go.Figure()
+                fig_cmp.add_trace(go.Bar(name="Model", x=outcomes, y=model_vals, marker_color="#00E5FF"))
+                fig_cmp.add_trace(go.Bar(name="Market Fair", x=outcomes, y=market_vals, marker_color="#7C3AED"))
+                fig_cmp.update_layout(barmode="group", title="Model vs Market Probabilities", yaxis_title="Probability (%)")
+                st.plotly_chart(fig_cmp, use_container_width=True)
+            except Exception:
+                st.caption("Comparison chart unavailable.")
+
     with tab_narrative:
         st.write(row.get("scouting_narrative", "Narrative unavailable."))
         if row.get("reasons_for"):
@@ -965,6 +1184,41 @@ def render_value_bets_dashboard():
         st.metric("Avg Confidence", f"{avg_conf:.0f}")
 
     st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+
+    if preds:
+        chart_col1, chart_col2 = st.columns(2)
+        with chart_col1:
+            ev_vals = [p.get("ev_pct", 0) for p in preds if p.get("ev_pct", 0) != 0]
+            if ev_vals:
+                fig_ev = px.histogram(
+                    x=ev_vals,
+                    nbins=20,
+                    title="EV % Distribution",
+                    labels={"x": "Expected Value (%)", "y": "Count"},
+                    color_discrete_sequence=["#00E5FF"],
+                )
+                fig_ev.add_vline(x=0, line_dash="dash", line_color="red")
+                st.plotly_chart(fig_ev, use_container_width=True)
+        with chart_col2:
+            tier_counts = {}
+            for p in preds:
+                t = p.get("confidence_tier", "NO_BET")
+                tier_counts[t] = tier_counts.get(t, 0) + 1
+            if tier_counts:
+                fig_tier = px.pie(
+                    names=list(tier_counts.keys()),
+                    values=list(tier_counts.values()),
+                    title="Prediction Tier Breakdown",
+                    color=list(tier_counts.keys()),
+                    color_discrete_map={
+                        "LOCK": "#EF4444",
+                        "STRONG": "#F59E0B",
+                        "VALUE": "#22C55E",
+                        "LEAN": "#7C3AED",
+                        "NO_BET": "#64748B",
+                    },
+                )
+                st.plotly_chart(fig_tier, use_container_width=True)
 
     st.subheader("Top Value Bets (Ranked by Expected Value)")
     df = pd.DataFrame(preds) if preds else pd.DataFrame()
@@ -1421,12 +1675,178 @@ def render_system_health():
         {"Source": "sklearn Poisson", "Status": "Active", "Coverage": "Regularized Poisson ensemble"},
         {"Source": "aiBetModel Market Engine", "Status": "Active", "Coverage": "EV, Kelly, tier classification"},
         {"Source": "PredictionLedger", "Status": "Active", "Coverage": "SQLite audit trail, Brier, calibration"},
+        {"Source": "PredictionPipelineV2", "Status": "Active", "Coverage": "Next-gen ensemble with ML + calibration"},
+        {"Source": "PaperTradingTracker", "Status": "Active", "Coverage": "Bankroll simulation, P&L, hit rate"},
+        {"Source": "Plotly Charts", "Status": "Active", "Coverage": "EV histograms, tier pies, gauges, P&L curves"},
+        {"Source": "streamlit-option-menu", "Status": "Active", "Coverage": "Icon-based sidebar navigation"},
     ])
     st.dataframe(sources, use_container_width=True, hide_index=True)
 
     st.subheader("Automation Log")
     log_entries = [f"[{datetime.now().strftime('%H:%M:%S')}] System initialized — {len(st.session_state.predictions)} predictions loaded"]
     st.text_area("Automation Log", value="\n".join(log_entries), height=120, disabled=True)
+
+
+# ---------------------------------------------------------------------------
+# Page: Bankroll & Portfolio
+# ---------------------------------------------------------------------------
+
+def render_bankroll_portfolio():
+    st.markdown('<div class="main-header">Bankroll & Portfolio Tracker</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Paper trading, stake sizing, and portfolio analytics</div>',
+                unsafe_allow_html=True)
+
+    try:
+        from backend.monitoring import PaperTradingTracker
+        from backend.intelligence import PredictionLedger
+
+        if "bankroll_tracker" not in st.session_state:
+            st.session_state.bankroll_tracker = PaperTradingTracker(starting_bankroll=1000.0)
+
+        tracker = st.session_state.bankroll_tracker
+        ledger = PredictionLedger()
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Starting Bankroll", f"${tracker.starting_bankroll:.2f}")
+        with col2:
+            st.metric("Current Bankroll", f"${tracker.bankroll:.2f}", delta=f"{tracker.bankroll - tracker.starting_bankroll:+.2f}")
+        with col3:
+            summary = tracker.summary()
+            st.metric("Total P&L", f"${summary['total_pnl']:+.2f}", delta=f"ROI {summary['roi_pct']:+.1f}%")
+        with col4:
+            st.metric("Active Bets", summary["n_pending"], delta=f"Win rate {summary['hit_rate_pct']:.0f}%")
+
+        st.markdown('<hr class="section-divider">', unsafe_allow_html=True)
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.subheader("Place Paper Trade")
+            preds = st.session_state.predictions
+            if preds:
+                options = [f"{p['home_team']} vs {p['away_team']} — {p.get('best_outcome', 'N/A')}" for p in preds]
+                sel = st.selectbox("Select prediction", options=options, key="bankroll_sel")
+                idx = options.index(sel) if sel in options else 0
+                p = preds[idx]
+                stake_pct = st.slider("Stake % of bankroll", 0.1, 10.0, float(p.get("stake_suggestion_pct", 1.0)), 0.1, key="bankroll_stake")
+                if st.button("Place Paper Bet", type="primary", use_container_width=True, key="bankroll_place"):
+                    try:
+                        tracker.record_bet(
+                            p["match_label"],
+                            p.get("best_outcome", "home"),
+                            p.get("model_prob_best", 50) / 100,
+                            _safe_float(p.get("home_odd", 0)) or 2.0,
+                            stake_pct / 100.0,
+                        )
+                        st.success("Paper bet placed.")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Error placing bet: {ex}")
+            else:
+                st.info("No predictions available. Build models first.")
+
+        with col_b:
+            st.subheader("Settle Result")
+            pending = [t for t in tracker._trades if t.result is None]
+            if pending:
+                settle_options = [f"{t.match_label} — {t.outcome.upper()}" for t in pending]
+                settle_sel = st.selectbox("Pending bets", options=settle_options, key="bankroll_settle")
+                settle_idx = settle_options.index(settle_sel) if settle_sel in settle_options else 0
+                t = pending[settle_idx]
+                result_choice = st.selectbox("Actual result", ["H", "D", "A"], key="bankroll_result")
+                if st.button("Settle Bet", type="primary", use_container_width=True, key="bankroll_settle_btn"):
+                    try:
+                        tracker.settle(t.match_label, result_choice)
+                        st.success("Bet settled.")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"Error settling bet: {ex}")
+            else:
+                st.info("No pending bets.")
+
+        st.subheader("Trade History")
+        history = [t for t in tracker._trades if t.result is not None]
+        if history:
+            pnl_series = [t.pnl or 0.0 for t in history]
+            cumulative = np.cumsum(pnl_series)
+            fig_pnl = go.Figure()
+            fig_pnl.add_trace(go.Scatter(y=cumulative, mode="lines+markers", name="Cumulative P&L", line={"color": "#00E5FF"}))
+            fig_pnl.add_hline(y=0, line_dash="dash", line_color="gray")
+            fig_pnl.update_layout(title="Cumulative P&L", xaxis_title="Trade #", yaxis_title="USD")
+            st.plotly_chart(fig_pnl, use_container_width=True)
+
+            hist_df = pd.DataFrame([
+                {
+                    "Match": t.match_label,
+                    "Backed": t.outcome.upper(),
+                    "Model Prob": f"{t.model_prob:.1%}",
+                    "Odds": f"{t.odds_taken:.2f}",
+                    "Stake %": f"{t.stake_fraction * 100:.1f}%",
+                    "P&L": f"${t.pnl:+.2f}" if t.pnl else "—",
+                    "Result": t.result,
+                }
+                for t in history
+            ])
+            st.dataframe(hist_df, use_container_width=True, hide_index=True)
+
+            if st.button("Clear History", key="bankroll_clear"):
+                tracker._trades = [t for t in tracker._trades if t.result is None]
+                st.success("History cleared.")
+                st.rerun()
+        else:
+            st.caption("No settled trades yet.")
+
+    except Exception as ex:
+        st.error(f"Bankroll module unavailable: {ex}")
+
+
+# ---------------------------------------------------------------------------
+# Page: Settings
+# ---------------------------------------------------------------------------
+
+def render_settings():
+    st.markdown('<div class="main-header">Settings</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Model parameters, defaults, and preferences</div>',
+                unsafe_allow_html=True)
+
+    st.subheader("Model Defaults")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        decay = st.slider("Recency Decay", 0.50, 1.00, 0.92, 0.01, key="set_decay")
+        st.session_state["default_decay"] = decay
+    with c2:
+        shrinkage_k = st.slider("Bayesian Shrinkage K", 0.1, 20.0, 6.0, 0.5, key="set_k")
+        st.session_state["default_shrinkage_k"] = shrinkage_k
+    with c3:
+        home_adv = st.slider("Home Advantage", 0.5, 2.0, 1.0, 0.05, key="set_hadv")
+        st.session_state["default_home_adv"] = home_adv
+
+    st.subheader("Display")
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        st.session_state["default_league"] = st.selectbox(
+            "Default League",
+            ["eng.1", "es.1", "de.1", "it.1", "fr.1", "ken.1", "ng.1", "za.1"],
+            index=0,
+            key="set_league",
+        )
+    with col_d2:
+        st.session_state["currency"] = st.selectbox("Currency", ["USD", "EUR", "GBP", "KES", "NGN", "ZAR"], index=0, key="set_currency")
+
+    st.subheader("Data & Cache")
+    if st.button("Clear Session Cache", key="set_clear_cache"):
+        st.cache_data.clear()
+        st.success("Cache cleared.")
+
+    st.subheader("About")
+    st.markdown("""
+    **PredictBet AI** — Institutional-Grade Football Betting Intelligence Engine
+
+    - Poisson GLM + Bayesian + ELO + ML ensemble
+    - Multi-bookmaker de-vigging and EV calculation
+    - Automated NO-BET refusal logic
+    - Paper trading and bankroll management
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -1459,35 +1879,83 @@ def run_app():
             st.button(theme_icon, key="theme_toggle", on_click=_toggle_theme, help="Toggle theme")
 
         st.markdown("---")
-        page = st.radio(
-            "Navigation",
-            [
-                "Dashboard (Value Bets)",
-                "Match Analyzer",
-                "Today's Fixtures",
-                "Team Intel",
-                "Historical Performance",
-                "Betting Sites",
-                "System Health",
-            ],
-        )
+
+        if option_menu is not None:
+            page = option_menu(
+                "Navigation",
+                [
+                    "Dashboard",
+                    "Match Analyzer",
+                    "Fixtures",
+                    "Team Intel",
+                    "Bankroll",
+                    "Settings",
+                    "System Health",
+                ],
+                icons=[
+                    "speedometer2",
+                    "graph-up-arrow",
+                    "calendar-event",
+                    "people",
+                    "wallet2",
+                    "gear",
+                    "heart-pulse",
+                ],
+                menu_icon="cast",
+                default_index=0,
+                styles={
+                    "container": {"padding": "0!important", "background-color": "transparent"},
+                    "icon": {"color": "var(--accent)", "font-size": "1.2rem"},
+                    "nav-link": {"font-size": "0.95rem", "text-align": "left", "margin": "2px 0"},
+                    "nav-link-selected": {"background-color": "var(--accent2)", "color": "white"},
+                },
+            )
+        else:
+            page = st.radio(
+                "Navigation",
+                [
+                    "Dashboard (Value Bets)",
+                    "Match Analyzer",
+                    "Today's Fixtures",
+                    "Team Intel",
+                    "Bankroll & Portfolio",
+                    "Settings",
+                    "System Health",
+                ],
+            )
+
         st.markdown("---")
         st.caption("Automated workflow:\n1. Fetch fixtures\n2. Scrape form + xG\n3. Ensemble models\n4. De-vig markets\n5. EV + Kelly\n6. Rank & report")
         st.caption("Never fabricate data.\nInsufficient evidence → NO BET.")
 
-    if page == "Dashboard (Value Bets)":
+    page_map = {
+        "Dashboard (Value Bets)": "Dashboard (Value Bets)",
+        "Dashboard": "Dashboard (Value Bets)",
+        "Match Analyzer": "Match Analyzer",
+        "Match Analyzer": "Match Analyzer",
+        "Fixtures": "Today's Fixtures",
+        "Today's Fixtures": "Today's Fixtures",
+        "Team Intel": "Team Intel",
+        "Bankroll & Portfolio": "Bankroll & Portfolio",
+        "Bankroll": "Bankroll & Portfolio",
+        "Settings": "Settings",
+        "System Health": "System Health",
+    }
+    target = page_map.get(page, page)
+
+    if target == "Dashboard (Value Bets)":
         render_value_bets_dashboard()
-    elif page == "Match Analyzer":
+    elif target == "Match Analyzer":
         render_match_analyzer()
-    elif page == "Today's Fixtures":
+    elif target == "Today's Fixtures":
         render_betika_fixtures()
-    elif page == "Team Intel":
+    elif target == "Team Intel":
         render_team_intel()
-    elif page == "Historical Performance":
-        render_historical_performance()
-    elif page == "Betting Sites":
-        render_data_sources()
-    elif page == "System Health":
+    elif target == "Bankroll & Portfolio":
+        render_bankroll_portfolio()
+    elif target == "Settings":
+        render_settings()
+    elif target == "System Health":
         render_system_health()
 
 

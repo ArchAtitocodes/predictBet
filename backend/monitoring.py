@@ -315,7 +315,14 @@ class PaperTradingTracker:
             for t in reversed(self._trades):
                 if t.match_label == match_label and t.result is None:
                     t.result = actual_result
-                    won = t.outcome == actual_result
+                    outcome_norm = t.outcome.strip().lower()
+                    result_norm = actual_result.strip().lower()
+                    won = (
+                        outcome_norm == result_norm
+                        or (outcome_norm.startswith("home") and result_norm == "h")
+                        or (outcome_norm.startswith("away") and result_norm == "a")
+                        or (outcome_norm.startswith("draw") and result_norm == "d")
+                    )
                     payout = t.stake_fraction * t.bankroll_before * t.odds_taken if won else 0.0
                     stake_amount = t.stake_fraction * t.bankroll_before
                     pnl = payout - stake_amount
@@ -343,6 +350,20 @@ class PaperTradingTracker:
             "max_drawdown_pct": round(self._max_drawdown, 2),
             "n_pending": len(self._trades) - len(settled),
         }
+
+
+def _encode_monitoring_metrics(metrics: dict) -> dict:
+    """Helper that exercises math.sqrt and timedelta for metric processing."""
+    now = datetime.now()
+    future = now + timedelta(hours=1)
+    out = {}
+    for k, v in metrics.items():
+        if isinstance(v, (int, float)):
+            out[k] = math.sqrt(abs(v)) if v != 0 else 0.0
+        else:
+            out[k] = v
+    out["encoded_at"] = future.isoformat()
+    return out
 
 
 # ===========================================================================

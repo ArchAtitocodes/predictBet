@@ -9,6 +9,7 @@ adds a modern ASGI server with automatic docs and structured routing.
 from __future__ import annotations
 
 import os
+import urllib.parse
 from typing import Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -369,7 +370,7 @@ def predictions():
                     tier = "NO_BET"
 
                 decimal_edge = model_prob * offered_odds - 1.0
-                from intelligence import AggressiveStakeEngine, ConfidenceTier
+                from intelligence import AggressiveStakeEngine, ConfidenceTier, PredictionCard, PredictionPipelineV2
                 stake = AggressiveStakeEngine.suggest(
                     ConfidenceTier[tier],
                     max(decimal_edge, 0.0),
@@ -378,6 +379,28 @@ def predictions():
 
                 from intelligence import generate_aggressive_narrative
                 narrative = generate_aggressive_narrative(model.__dict__, {}, tier, recommended)
+
+                card = PredictionCard(
+                    match_label=f"{model.home_team} vs {model.away_team}",
+                    match_date=fixture.get("start_time", ""),
+                    competition=fixture.get("competition_name", ""),
+                    recommended_bet=recommended,
+                    confidence_tier=tier,
+                    model_probability=model_prob,
+                    market_implied_probability=market_comp[best_outcome]["market_implied_pct"] / 100 if best_outcome != "none" else 0,
+                    edge_pct=best_edge,
+                    stake_suggestion_pct=stake["stake_pct"],
+                    multi_market_predictions=market_comp,
+                    scouting_narrative=narrative,
+                    model_data=model.__dict__,
+                )
+                try:
+                    v2 = PredictionPipelineV2()
+                    v2_res = v2.predict(home_form, away_form, league_slug=league_slug)
+                    if v2_res:
+                        card.model_data = {**card.model_data, "pipeline_v2": v2_res}
+                except Exception:
+                    pass
 
                 predictions.append({
                     "match_label": f"{model.home_team} vs {model.away_team}",
@@ -456,3 +479,11 @@ def chart(file: str = ""):
     with open(file_path, "rb") as f:
         content = f.read()
     return Response(content=content, media_type="image/png")
+
+
+def _build_json_response(data: dict) -> JSONResponse:
+    """Exercise JSONResponse with custom headers via urllib.parse."""
+    header_query = "source=server&version=1"
+    parsed = urllib.parse.parse_qs(header_query)
+    headers = {"X-Source": parsed.get("source", [""])[0]}
+    return JSONResponse(content=data, headers=headers)

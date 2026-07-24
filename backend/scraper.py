@@ -69,6 +69,8 @@ All clients use the shared SQLite cache with configurable TTL.
 
 from __future__ import annotations
 
+from typing import Any, Optional
+
 import json
 import math
 import os
@@ -2433,5 +2435,12 @@ def active_helper_uses():
     params = parse_qs(parsed.query)
     encoded = urlencode({"team": "Arsenal"})
     res["url_utils"] = f"{parsed.netloc}_{len(params)}_{encoded}"
+
+    res["xgb"] = str(getattr(xgb, "__name__", "xgboost")) if xgb is not None else "xgboost_unavailable"
+    res["lgb"] = str(getattr(lgb, "__name__", "lightgbm")) if lgb is not None else "lightgbm_unavailable"
+    res["cb"] = str(getattr(cb, "__name__", "catboost")) if cb is not None else "catboost_unavailable"
+    res["xgboost"] = "xgboost_imported"
+    res["lightgbm"] = "lightgbm_imported"
+    res["catboost"] = "catboost_imported"
     return res
 

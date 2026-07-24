@@ -31,7 +31,9 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 from scraper import FormMomentumCalculator, MultiMarketPredictor
+from intelligence import PredictionLedger, PredictionCard, MLEnhancedEnsemble
 from aiBetModel.integration import build_market_assessments, build_stake_recommendations
+from aiBetModel.quality import EvidenceChecklist, grade_data_quality
 
 
 def active_pipeline_helpers(xg_home: float = 1.8, xg_away: float = 1.2) -> Dict[str, Any]:
@@ -109,6 +111,7 @@ class PipelineResult:
     latency_ms: float = 0.0
     status: str = "ok"
     error: Optional[str] = None
+    latent: Optional[Any] = None
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +355,10 @@ class MarketEvaluator:
 
         risk_score = self._risk_score(confidence_raw, best_edge, enrichment)
         risk_label = "Low" if risk_score < 35 else ("Medium" if risk_score < 65 else "High")
+
+        fair_odds = 0.0
+        if market_comp and best_outcome != "none":
+            fair_odds = 1.0 / market_comp[best_outcome]["market_implied_pct"]
 
         from aiBetModel.integration import build_market_assessments, build_stake_recommendations
         assessments = []
@@ -656,6 +663,8 @@ class AutomatedPredictionPipeline:
         self.evaluator = MarketEvaluator()
         self.refusal_engine = BetRefusalEngine()
         self.report_generator = InstitutionalReportGenerator()
+        self.ledger = PredictionLedger()
+        self.ml_ensemble = MLEnhancedEnsemble()
         self.max_workers = max_workers
         self.auto_reject = auto_reject
         self._lock = threading.Lock()
@@ -793,7 +802,6 @@ class AutomatedPredictionPipeline:
             xg_data=enrichment.xg_data,
             elo_home=enrichment.elo_home,
             elo_away=enrichment.elo_away,
-            h2h_available=bool(enrichment.h2h_matches),
             conflicting_sources=ensemble.agreement_score < 0.6 if ensemble else False,
             odds_movement=enrichment.odds_movement,
         )
@@ -880,9 +888,59 @@ class AutomatedPredictionPipeline:
             "away_odd": oa,
         }
 
+        prediction_card = PredictionCard(
+            match_label=card["match_label"],
+            match_date=card["start_time"],
+            competition=card["competition_name"],
+            recommended_bet=card["best_outcome"],
+            confidence_tier=card["confidence_tier"],
+            model_probability=card["model_prob_best"] / 100 if card["model_prob_best"] else 0,
+            market_implied_probability=card["market_implied_best"] / 100 if card["market_implied_best"] else 0,
+            edge_pct=card["edge_pct"],
+            stake_suggestion_pct=card["stake_suggestion_pct"],
+            signals={
+                "home_momentum": momentum_home,
+                "away_momentum": momentum_away,
+            },
+            multi_market_predictions=market_comp,
+            scouting_narrative=narrative,
+            model_data=card["model"],
+        )
+
+        try:
+            from features import MatchFeatureVector
+            feature_vector = None
+            try:
+                from features import FeatureExtractor
+                fv = FeatureExtractor()
+                feature_vector = fv.build_vector(
+                    home, away, league_slug=enrichment.league_slug,
+                    match_date=card["start_time"],
+                    odds_home=oh, odds_draw=od, odds_away=oa,
+                    match_id=fixture.get("match_id", ""),
+                    home_id="",
+                    away_id="",
+                    model=model,
+                )
+            except Exception:
+                pass
+            ml_enriched = self.ml_ensemble.enrich(ensemble, feature_vector)
+            if ml_enriched.get("ml_prediction"):
+                prediction_card.ml_prediction = ml_enriched["ml_prediction"]
+            if ml_enriched.get("calibrated_probabilities"):
+                prediction_card.calibrated_probabilities = ml_enriched["calibrated_probabilities"]
+        except Exception:
+            pass
+
+        self.ledger.log(
+            model=model,
+            agreement_score=ensemble.agreement_score if ensemble else 1.0,
+        )
+
         return PipelineResult(
             prediction_card=card,
             enrichment=enrichment,
+            latent=prediction_card,
             latency_ms=(time.time() - t0) * 1000,
         )
 

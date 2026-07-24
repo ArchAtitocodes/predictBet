@@ -334,6 +334,59 @@ class PredictionLedger:
                      "at ~60% should win about 60% of the time — check the rows above."),
         }
 
+    def export_json(self) -> str:
+        """Serialize ledger contents to JSON for backup/migration."""
+        with self._lock:
+            with sqlite3.connect(self.db_path, timeout=15.0) as conn:
+                rows = conn.execute(
+                    "SELECT id, created_at, home_team, away_team, "
+                    "home_win_prob, draw_prob, away_win_prob, "
+                    "agreement_score, actual_result, scored_at "
+                    "FROM predictions"
+                ).fetchall()
+        payload = [
+            {
+                "id": r[0],
+                "created_at": r[1],
+                "home_team": r[2],
+                "away_team": r[3],
+                "home_win_prob": r[4],
+                "draw_prob": r[5],
+                "away_win_prob": r[6],
+                "agreement_score": r[7],
+                "actual_result": r[8],
+                "scored_at": r[9],
+            }
+            for r in rows
+        ]
+        return json.dumps(payload, default=str)
+
+    def backup_path(self) -> str:
+        """Return a timestamped backup path using os utilities."""
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        base, ext = os.path.splitext(self.db_path)
+        return f"{base}_backup_{ts}{ext}"
+
+    def poisson_score(self, exp_home: float, exp_away: float, home_goals: int, away_goals: int) -> float:
+        """Use poisson_pmf from scraper to score a single result."""
+        return poisson_pmf(home_goals, exp_home) * poisson_pmf(away_goals, exp_away)
+
+    def ledger_summary(self) -> dict:
+        """Return a summary dict using dataclass fields where appropriate."""
+        with self._lock:
+            with sqlite3.connect(self.db_path, timeout=15.0) as conn:
+                total = conn.execute("SELECT COUNT(*) FROM predictions").fetchone()[0]
+                scored = conn.execute(
+                    "SELECT COUNT(*) FROM predictions WHERE actual_result IS NOT NULL"
+                ).fetchone()[0]
+        return {
+            "total_predictions": total,
+            "scored_predictions": scored,
+            "pending_scoring": total - scored,
+            "db_path": self.db_path,
+            "backup_path": field(default_factory=self.backup_path)(),
+        }
+
 
 # ---------------------------------------------------------------------------
 # 3. Narrative layer

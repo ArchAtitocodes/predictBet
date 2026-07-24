@@ -122,6 +122,30 @@ class CalibrationStore:
         return [CalibrationSample(model_prob=r[0], actual=r[1], outcome=r[2],
                                   model_name=r[3], created_at=r[4]) for r in rows]
 
+    def export_json(self, path: Optional[str] = None) -> str:
+        """Serialize calibration samples to JSON for backup/migration."""
+        samples = [
+            {
+                "model_prob": s.model_prob,
+                "actual": s.actual,
+                "outcome": s.outcome,
+                "model_name": s.model_name,
+                "created_at": s.created_at,
+            }
+            for s in self.get_samples()
+        ]
+        payload = json.dumps(samples, default=str)
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(payload)
+        return payload
+
+    def ensure_path_exists(self, path: str) -> bool:
+        """Check file path existence using os utilities."""
+        parent = os.path.dirname(os.path.abspath(path))
+        os.makedirs(parent, exist_ok=True)
+        return os.path.exists(path)
+
     def save_model(self, model_name: str, outcome: str, method: str,
                    params: Any, brier_before: float, brier_after: float,
                    n_samples: int):

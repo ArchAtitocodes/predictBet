@@ -74,7 +74,7 @@ class SettledBet:
     market_prob_draw: Optional[float] = None
     market_prob_away: Optional[float] = None
     closing_odds: Optional[float] = None   # odds just before kickoff, if tracked
-    stake_fraction: Optional[float] = None  # fraction of bankroll actually staked, if known
+    stake_fraction: Optional[float] = field(default=None)  # fraction of bankroll actually staked, if known
 
     def won(self) -> bool:
         return self.outcome_backed == self.actual_result

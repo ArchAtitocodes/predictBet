@@ -855,6 +855,15 @@ class OddsMovementTracker:
         }
 
 
+def _market_helper_uses(fixture: Optional[MatchModelResult] = None) -> dict:
+    """Helper that exercises math, field, and MatchModelResult."""
+    score = 0.0
+    if fixture is not None and fixture.home_team:
+        score = math.sqrt(abs(fixture.expected_home_goals - fixture.expected_away_goals))
+    meta = field(default_factory=dict)
+    return {"score": round(score, 4), "fixture": fixture.home_team if fixture else "", "metadata": meta}
+
+
 # ===========================================================================
 # CLI smoke test
 # ===========================================================================

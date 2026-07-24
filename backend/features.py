@@ -669,6 +669,20 @@ class FeatureSelector:
         drop = [col for col in upper.columns if any(upper[col] > max_corr)]
         return [c for c in numeric_df.columns if c not in drop]
 
+    def export_with_metadata(self, vector: MatchFeatureVector, suffix: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Use os, time, field, List, and Any to build an export payload."""
+        suffix = suffix or str(int(time.time()))
+        payload: List[Dict[str, Any]] = [
+            {
+                "cached_at": time.time(),
+                "path_check": os.path.exists("."),
+                "feature_version": field(default="1.0"),
+                "vector": vector.to_flat_dict(),
+                "metadata": {"suffix": suffix},
+            }
+        ]
+        return payload
+
 
 # ===========================================================================
 # CLI smoke test

@@ -2444,3 +2444,420 @@ def active_helper_uses():
     res["catboost"] = "catboost_imported"
     return res
 
+
+# ===========================================================================
+# JSON Site Data Cleaner & Link Scraper
+# ===========================================================================
+
+class JSONSiteDataCleaner:
+    """Cleans and normalizes raw odds and site scrape results from betting sites."""
+
+    @staticmethod
+    def clean_odds_val(val: Any) -> Optional[float]:
+        """Parse a raw odds string/value into a decimal float.
+        
+        Supports:
+        - Decimal: "2.50" -> 2.50
+        - American: "+150" -> 2.50, "-200" -> 1.50
+        - Fractional: "3/2" -> 2.50
+        
+        Returns None for invalid/zero values.
+        """
+        if val is None:
+            return None
+        s = str(val).strip()
+        if not s:
+            return None
+        try:
+            f = float(s)
+            if f <= 1.0:
+                return None
+            return round(f, 4)
+        except (ValueError, TypeError):
+            pass
+
+        if "/" in s:
+            parts = s.split("/")
+            if len(parts) == 2:
+                try:
+                    num = float(parts[0].strip())
+                    den = float(parts[1].strip())
+                    if den <= 0:
+                        return None
+                    result = (num / den) + 1.0
+                    if result <= 1.0:
+                        return None
+                    return round(result, 4)
+                except (ValueError, TypeError):
+                    return None
+
+        if s.startswith("+"):
+            try:
+                american = int(s[1:].strip())
+                if american <= 0:
+                    return None
+                return round(american / 100.0 + 1.0, 4)
+            except (ValueError, TypeError):
+                return None
+
+        if s.startswith("-"):
+            try:
+                american = int(s[1:].strip())
+                if american <= 0:
+                    return None
+                return round(100.0 / american + 1.0, 4)
+            except (ValueError, TypeError):
+                return None
+
+        return None
+
+    @classmethod
+    def clean_site_scrape_results(cls, raw_results: list[dict]) -> dict:
+        """Aggregate raw site scrape results into cleaned analytics.
+        
+        Returns a dict with:
+        - total_sites, successful_sites, sites_with_odds
+        - line_shopping: best odds per outcome with site attribution
+        - consensus_market_prob: implied probabilities averaged across sources
+        """
+        total_sites = len(raw_results)
+        successful_sites = 0
+        sites_with_odds = 0
+
+        home_odds = []
+        draw_odds = []
+        away_odds = []
+
+        site_details = []
+
+        for result in raw_results:
+            status = result.get("status", "")
+            status_code = result.get("status_code", 0)
+            latency = result.get("latency_ms", 0)
+
+            is_success = status == "success" or status_code == 200
+            if is_success:
+                successful_sites += 1
+
+            extracted = result.get("extracted_odds", {})
+            h = cls.clean_odds_val(extracted.get("home"))
+            d = cls.clean_odds_val(extracted.get("draw"))
+            a = cls.clean_odds_val(extracted.get("away"))
+
+            has_odds = h is not None and d is not None and a is not None
+            if has_odds:
+                sites_with_odds += 1
+                home_odds.append((h, result.get("name", "")))
+                draw_odds.append((d, result.get("name", "")))
+                away_odds.append((a, result.get("name", "")))
+
+            site_details.append({
+                "name": result.get("name", ""),
+                "url": result.get("url", ""),
+                "success": is_success,
+                "has_odds": has_odds,
+                "latency_ms": latency,
+                "home_odd": h,
+                "draw_odd": d,
+                "away_odd": a,
+            })
+
+        best_home = max(home_odds, key=lambda x: x[0]) if home_odds else None
+        best_draw = max(draw_odds, key=lambda x: x[0]) if draw_odds else None
+        best_away = max(away_odds, key=lambda x: x[0]) if away_odds else None
+
+        consensus = {"home": None, "draw": None, "away": None}
+        if home_odds and draw_odds and away_odds:
+            def avg(odds_list):
+                vals = [o[0] for o in odds_list]
+                return sum(vals) / len(vals) if vals else None
+
+            avg_h = avg(home_odds)
+            avg_d = avg(draw_odds)
+            avg_a = avg(away_odds)
+            total = (1.0 / avg_h + 1.0 / avg_d + 1.0 / avg_a) if avg_h and avg_d and avg_a else None
+            if total and total > 0:
+                consensus = {
+                    "home": round((1.0 / avg_h) / total, 4),
+                    "draw": round((1.0 / avg_d) / total, 4),
+                    "away": round((1.0 / avg_a) / total, 4),
+                }
+
+        return {
+            "total_sites": total_sites,
+            "successful_sites": successful_sites,
+            "sites_with_odds": sites_with_odds,
+            "line_shopping": {
+                "best_home_odds": {"odd": best_home[0], "site": best_home[1]} if best_home else None,
+                "best_draw_odds": {"odd": best_draw[0], "site": best_draw[1]} if best_draw else None,
+                "best_away_odds": {"odd": best_away[0], "site": best_away[1]} if best_away else None,
+            },
+            "consensus_market_prob": consensus,
+            "site_details": site_details,
+            "raw_odds_count": {
+                "home_providers": len(home_odds),
+                "draw_providers": len(draw_odds),
+                "away_providers": len(away_odds),
+            },
+        }
+
+
+class JSONLinkScraper:
+    """Rigorously scrapes all configured betting sites and API web links.
+    
+    Collects data from:
+    1. football_betting_sites.json betting site URLs
+    2. All hardcoded API endpoints in scraper.py source code
+    
+    For each source, attempts to fetch and extract odds, then cleans
+    and normalizes the data using JSONSiteDataCleaner.
+    """
+
+    def __init__(self, sites_json_path: str = _SITES_JSON_PATH):
+        self.sites_json_path = sites_json_path
+        self.betting_site_registry = BettingSiteRegistry(json_path=sites_json_path)
+        self.available = requests is not None
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        self._api_link_cache: dict[str, Any] = {}
+
+    def _extract_code_api_links(self) -> list[dict]:
+        """Extract all hardcoded API/web links from scraper.py source code.
+        
+        Returns list of {name, url, category, method} dicts for every
+        known endpoint string in the module.
+        """
+        api_links = []
+
+        source_map = [
+            ("Betika API", OFFICIAL_DATA_SOURCES.get("betika", "https://api.betika.com"), "betting_api", "GET"),
+            ("ESPN Search API", "https://site.web.api.espn.com/apis/search/v2", "search_api", "GET"),
+            ("ESPN Team Schedule", "https://site.api.espn.com/apis/site/v2/sports/soccer/{league_slug}/teams/{team_id}/schedule", "schedule_api", "GET"),
+            ("ESPN League Standings", "https://site.api.espn.com/apis/v2/sports/soccer/{league_slug}/standings", "standings_api", "GET"),
+            ("ESPN Scoreboard", "https://site.api.espn.com/apis/site/v2/sports/soccer/{league_slug}/scoreboard", "scoreboard_api", "GET"),
+            ("football-data.org", FOOTBALL_DATA_BASE_URL, "football_api", "GET"),
+            ("ClubELO API", "http://api.clubelo.com/{team_name}", "elo_api", "GET"),
+            ("ClubELO Web", "http://clubelo.com", "elo_web", "GET"),
+            ("Wikipedia Search", "https://en.wikipedia.org/w/api.php", "wiki_api", "GET"),
+            ("Wikipedia Team", "https://en.wikipedia.org/wiki/{team_name}", "wiki_page", "GET"),
+            ("BBC Football RSS", "https://feeds.bbci.co.uk/sport/football/rss.xml", "news_rss", "GET"),
+            ("SkySports RSS", "https://www.skysports.com/rss/12040", "news_rss", "GET"),
+            ("OpenWeatherMap", "https://api.openweathermap.org/data/2.5/weather", "weather_api", "GET"),
+            ("FBref (soccerdata)", "https://fbref.com", "stats_web", "GET"),
+            ("Transfermarkt", "https://www.transfermarkt.com", "stats_web", "GET"),
+            ("WorldFootball", "https://www.worldfootball.net", "stats_web", "GET"),
+            ("Soccerway", "https://int.soccerway.com", "stats_web", "GET"),
+        ]
+
+        for name, url, category, method in source_map:
+            api_links.append({
+                "name": name,
+                "url": url,
+                "category": category,
+                "method": method,
+                "source_type": "code_api",
+            })
+
+        return api_links
+
+    def _fetch_site_odds(self, site: dict) -> dict:
+        """Attempt to fetch odds data from a single betting site.
+        
+        Returns a result dict with name, url, status, status_code, latency_ms,
+        extracted_odds (if found).
+        """
+        name = site.get("name", "Unknown")
+        url = site.get("url", "")
+        result = {
+            "name": name,
+            "url": url,
+            "status": "failed",
+            "status_code": 0,
+            "latency_ms": 0.0,
+            "extracted_odds": {},
+            "error": None,
+        }
+
+        if not self.available or not url:
+            result["error"] = "requests not available or no URL"
+            return result
+
+        t0 = time.time()
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=12, allow_redirects=True)
+            latency = (time.time() - t0) * 1000
+            result["latency_ms"] = round(latency, 2)
+            result["status_code"] = resp.status_code
+
+            if resp.status_code == 200:
+                result["status"] = "success"
+                odds = self._extract_odds_from_html(resp.text, url)
+                result["extracted_odds"] = odds
+            else:
+                result["status"] = f"http_{resp.status_code}"
+        except requests.exceptions.Timeout:
+            result["status"] = "timeout"
+            result["error"] = "Request timed out"
+        except requests.exceptions.ConnectionError:
+            result["status"] = "connection_error"
+            result["error"] = "Connection failed"
+        except Exception as ex:
+            result["status"] = "error"
+            result["error"] = str(ex)[:200]
+
+        return result
+
+    def _extract_odds_from_html(self, html: str, url: str) -> dict:
+        """Attempt to extract basic odds values from HTML using heuristics.
+        
+        This is a best-effort extraction since every site structures odds differently.
+        We look for common decimal odd patterns and JSON embedded data.
+        """
+        odds = {"home": None, "draw": None, "away": None}
+
+        if BeautifulSoup is not None:
+            try:
+                soup = BeautifulSoup(html, "html.parser")
+                text = soup.get_text(separator=" ", strip=True)
+                words = text.split()
+                candidates = []
+                for word in words:
+                    clean = word.strip().strip(",").strip(";").strip(")")
+                    if not clean:
+                        continue
+                    parsed = JSONSiteDataCleaner.clean_odds_val(clean)
+                    if parsed is not None and 1.01 <= parsed <= 20.0:
+                        candidates.append(parsed)
+                if len(candidates) >= 3:
+                    odds["home"] = candidates[0]
+                    odds["draw"] = candidates[1]
+                    odds["away"] = candidates[2]
+            except Exception:
+                pass
+
+        return odds
+
+    def scrape_all_sites(self, limit: int = 50) -> dict:
+        """Scrape all betting sites from the JSON registry up to limit.
+        
+        Returns a report dict with:
+        - total_sites, successful_sites, sites_with_odds
+        - cleaned_results (via JSONSiteDataCleaner)
+        - api_links (all code-defined endpoints)
+        - comparison (cross-source consensus)
+        - errors encountered
+        """
+        sites = self.betting_site_registry.get_all_sites()
+        total_sites = min(limit, len(sites))
+        limited_sites = sites[:total_sites]
+
+        raw_results = []
+        errors = []
+
+        for site in limited_sites:
+            try:
+                result = self._fetch_site_odds(site)
+                if result.get("error"):
+                    errors.append(result["error"])
+                raw_results.append(result)
+            except Exception as ex:
+                errors.append(str(ex)[:200])
+
+        cleaned = JSONSiteDataCleaner.clean_site_scrape_results(raw_results)
+        api_links = self._extract_code_api_links()
+
+        comparison = self._compare_sources(raw_results, cleaned)
+
+        return {
+            "total_sites": total_sites,
+            "successful_sites": cleaned["successful_sites"],
+            "sites_with_odds": cleaned["sites_with_odds"],
+            "api_links_discovered": len(api_links),
+            "api_links": api_links[:20],
+            "cleaned_results": cleaned,
+            "comparison": comparison,
+            "errors": errors[:10],
+            "scraped_at": datetime.now().isoformat(),
+        }
+
+    def _compare_sources(self, raw_results: list[dict], cleaned: dict) -> dict:
+        """Compare data across scraped sources and identify consensus/conflicts."""
+        line = cleaned.get("line_shopping", {})
+        consensus = cleaned.get("consensus_market_prob", {})
+
+        conflicts = []
+        if line.get("best_home_odds") and line.get("best_draw_odds") and line.get("best_away_odds"):
+            best_h = line["best_home_odds"]["odd"]
+            best_d = line["best_draw_odds"]["odd"]
+            best_a = line["best_away_odds"]["odd"]
+            min_odd = min(best_h, best_d, best_a)
+            max_odd = max(best_h, best_d, best_a)
+            if max_odd > 0 and (max_odd - min_odd) / max_odd > 0.15:
+                conflicts.append("Significant odds spread detected across sources")
+
+        details = cleaned.get("site_details", [])
+        successful_details = [d for d in details if d.get("success")]
+        if len(successful_details) < 3:
+            conflicts.append(f"Low source coverage: only {len(successful_details)} successful connections")
+
+        return {
+            "consensus_probabilities": consensus,
+            "conflicts": conflicts,
+            "source_count": len(raw_results),
+            "data_quality": "high" if len(successful_details) >= 5 else ("moderate" if len(successful_details) >= 2 else "low"),
+            "best_available_odds": line,
+        }
+
+    def scrape_api_link(self, link_name: str, url_template: str, **params) -> Optional[dict]:
+        """Fetch data from a specific API link with rigorous error handling.
+        
+        Args:
+            link_name: descriptive name for logging
+            url_template: URL with optional {placeholders}
+            **params: values to fill placeholders and query params
+            
+        Returns parsed JSON or None.
+        """
+        if not self.available:
+            return None
+
+        url = url_template
+        try:
+            url = url.format(**params)
+        except (KeyError, IndexError):
+            url = url_template
+
+        cache_key = f"api_link:{link_name}:{hash(url)}"
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            t0 = time.time()
+            resp = requests.get(url, headers=self.headers, timeout=15)
+            latency = (time.time() - t0) * 1000
+
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                    data["_meta"] = {
+                        "source": link_name,
+                        "latency_ms": round(latency, 2),
+                        "status_code": resp.status_code,
+                    }
+                    _cache.set(cache_key, data, ttl=300)
+                    return data
+                except (ValueError, TypeError):
+                    return {"raw_text": resp.text[:500], "source": link_name, "latency_ms": round(latency, 2)}
+            else:
+                return {"error": f"HTTP {resp.status_code}", "source": link_name, "latency_ms": round(latency, 2)}
+        except Exception as ex:
+            return {"error": str(ex)[:200], "source": link_name}
+
+
+
